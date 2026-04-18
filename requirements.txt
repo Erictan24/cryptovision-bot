@@ -1,0 +1,28 @@
+# Bot 2 Scalping — Python dependencies
+# Python 3.10+ required
+
+# Core data & trading
+pandas>=2.0.0
+numpy>=1.24.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Telegram bot
+python-telegram-bot>=20.0
+
+# Chart generation
+matplotlib>=3.7.0
+scipy>=1.11.0
+
+# Dashboard API (optional)
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+
+# Database (built-in)
+# sqlite3 — stdlib
+
+# Bitunix API (if using auto trade)
+# Install separately if needed
+
+# Utilities
+pytz>=2023.3

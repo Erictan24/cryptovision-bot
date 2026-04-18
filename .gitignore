@@ -1,0 +1,14 @@
+.env
+*.pyc
+__pycache__/
+*.log
+bot.log
+bot_run.log
+bot_unified.log
+backtesting/cache/
+backtesting/results/
+backtesting/__pycache__/
+website/
+tradingview/
+*.pkl
+.claude/

@@ -1,0 +1,1416 @@
+"""
+bitunix_trader.py — Auto Trading Module untuk Bitunix Futures.
+
+Fitur:
+  - Open posisi LONG/SHORT otomatis
+  - Set SL dan TP langsung di exchange
+  - Money management: risk % per trade yang kamu tentukan
+  - Monitor posisi aktif
+  - Close posisi manual via Telegram
+  - Daily loss limit protection
+  - Max open position limit
+
+Cara pakai:
+  Tambahkan di .env:
+    BITUNIX_API_KEY=your_api_key
+    BITUNIX_SECRET_KEY=your_secret_key
+    TRADE_RISK_PER_TRADE=1.0     # % modal per trade
+    TRADE_LEVERAGE=10            # leverage default
+    TRADE_MAX_POSITIONS=3        # max posisi terbuka bersamaan
+    TRADE_MAX_DAILY_LOSS=3.0     # max loss harian %
+    TRADE_ENABLED=false          # true untuk aktifkan auto trade
+"""
+
+import hashlib
+import json
+import logging
+import os
+import time
+import uuid
+from datetime import datetime, date
+from typing import Optional
+
+import requests
+from dotenv import load_dotenv
+
+load_dotenv()
+logger = logging.getLogger(__name__)
+
+BASE_URL = "https://fapi.bitunix.com"
+
+
+# ============================================================
+# SIGNATURE — Bitunix double SHA256
+# ============================================================
+
+def _sha256(s: str) -> str:
+    return hashlib.sha256(s.encode('utf-8')).hexdigest()
+
+def _make_sign(api_key: str, secret_key: str,
+               nonce: str, timestamp: str,
+               query_params: str = "", body: str = "") -> str:
+    """
+    Bitunix signature:
+      digest = sha256(nonce + timestamp + api_key + query_params + body)
+      sign   = sha256(digest + secret_key)
+    """
+    digest = _sha256(nonce + timestamp + api_key + query_params + body)
+    sign   = _sha256(digest + secret_key)
+    return sign
+
+def _headers(api_key: str, secret_key: str,
+             query_params: str = "", body: str = "") -> dict:
+    nonce     = uuid.uuid4().hex[:16]
+    timestamp = str(int(time.time() * 1000))
+    sign      = _make_sign(api_key, secret_key, nonce, timestamp, query_params, body)
+    return {
+        "api-key"     : api_key,
+        "sign"        : sign,
+        "nonce"       : nonce,
+        "timestamp"   : timestamp,
+        "language"    : "en-US",
+        "Content-Type": "application/json",
+    }
+
+
+# ============================================================
+# BITUNIX TRADER
+# ============================================================
+
+class BitunixTrader:
+    """
+    Auto trading client untuk Bitunix Futures.
+
+    Money management sepenuhnya dikontrol user via .env:
+      TRADE_RISK_PER_TRADE  — % modal yang di-risk per trade (default 1%)
+      TRADE_LEVERAGE        — leverage yang dipakai (default 10x)
+      TRADE_MAX_POSITIONS   — max posisi terbuka (default 3)
+      TRADE_MAX_DAILY_LOSS  — batas loss harian % (default 3%)
+    """
+
+    def __init__(self):
+        self.api_key    = os.getenv('BITUNIX_API_KEY', '')
+        self.secret_key = os.getenv('BITUNIX_SECRET_KEY', '')
+        self.enabled    = os.getenv('TRADE_ENABLED', 'false').lower() == 'true'
+
+        # Money management — dikontrol user
+        self.risk_pct        = float(os.getenv('TRADE_RISK_PER_TRADE', '2.0'))
+        self.risk_usd        = float(os.getenv('TRADE_RISK_USD', '3'))  # $3 flat untuk semua signal
+        self.leverage        = int(os.getenv('TRADE_LEVERAGE', '10'))
+        self.max_positions   = int(os.getenv('TRADE_MAX_POSITIONS', '5'))
+        self.max_daily_loss  = float(os.getenv('TRADE_MAX_DAILY_LOSS', '10.0'))
+
+        # Track daily PnL
+        self._daily_loss_pct  = 0.0
+        self._daily_loss_usd  = 0.0
+        self._daily_loss_date = date.today()
+        self.max_daily_loss_usd = float(os.getenv('TRADE_MAX_DAILY_LOSS_USD', '10.0'))
+
+        # Track monthly PnL
+        self._monthly_pnl_usd    = 0.0
+        self._monthly_loss_usd   = 0.0
+        self._monthly_profit_usd = 0.0
+        self._monthly_trades     = 0
+        self._monthly_wins       = 0
+        self._monthly_period     = self._get_monthly_period()
+
+        # Track yearly PnL
+        self._yearly_pnl_usd     = 0.0
+        self._yearly_loss_usd    = 0.0
+        self._yearly_profit_usd  = 0.0
+        self._yearly_trades      = 0
+        self._yearly_wins        = 0
+
+        # Session
+        self._session = requests.Session()
+
+        # Cache trading pair info — minQty, precision per coin
+        self._pair_info = {}   # { 'ETHUSDT': {'min_qty': 0.01, 'precision': 4} }
+        self._pair_info_loaded = False
+
+        # Cache posisi aktif saat bot restart — untuk resume BEP monitor
+        self._active_monitors = set()  # symbols yang sedang dimonitor
+
+        # File untuk simpan data posisi aktif (entry, TP1, TP2, SL)
+        # Dipakai saat bot restart untuk resume monitor dengan data yang benar
+        self._positions_file = 'data/active_positions.json'
+        self._saved_positions = self._load_saved_positions()
+
+        # ── Circuit breaker — consecutive loss protection ────────
+        # Kalau 2 SL berturut-turut → pause trading 4 jam otomatis.
+        # Reset setiap kali ada TP1 hit atau trade profit.
+        self._consecutive_losses = 0
+        self._circuit_breaker_until: Optional[datetime] = None
+        self.circuit_breaker_max   = int(os.getenv('TRADE_CIRCUIT_BREAKER', '2'))   # default 2 SL
+        self.circuit_breaker_pause = int(os.getenv('TRADE_PAUSE_HOURS', '4'))        # pause 4 jam
+
+    @property
+    def is_ready(self) -> bool:
+        return bool(self.api_key and self.secret_key and self.enabled)
+
+    # ── HTTP helpers ──────────────────────────────────────────
+
+    def _get(self, path: str, params: dict = None) -> dict:
+        params = params or {}
+        # Bitunix signature: sort by key, concatenate key+value tanpa = atau &
+        # Contoh: {"marginCoin":"USDT"} → "marginCoinUSDT"
+        sorted_items = sorted(params.items())
+        query_sign = "".join(f"{k}{v}" for k, v in sorted_items)
+        # Query string untuk URL tetap pakai format normal key=value&key=value
+        query_url  = "&".join(f"{k}={v}" for k, v in sorted_items)
+        headers    = _headers(self.api_key, self.secret_key, query_params=query_sign)
+        url        = f"{BASE_URL}{path}"
+        try:
+            r = self._session.get(url, params=params, headers=headers, timeout=10)
+            return r.json()
+        except Exception as e:
+            logger.error(f"Bitunix GET {path}: {e}")
+            return {}
+
+    def _post(self, path: str, body: dict) -> dict:
+        body_str = json.dumps(body, separators=(',', ':'))
+        headers  = _headers(self.api_key, self.secret_key, body=body_str)
+        url      = f"{BASE_URL}{path}"
+        try:
+            r = self._session.post(url, data=body_str, headers=headers, timeout=10)
+            return r.json()
+        except Exception as e:
+            logger.error(f"Bitunix POST {path}: {e}")
+            return {}
+
+    # ── ACCOUNT ───────────────────────────────────────────────
+
+    def _load_pair_info(self) -> dict:
+        """Load trading pair info dari Bitunix — minQty, precision."""
+        if self._pair_info_loaded:
+            return self._pair_info
+        try:
+            data = self._session.get(
+                f"{BASE_URL}/api/v1/futures/market/trading_pairs",
+                timeout=10
+            ).json()
+            if data.get('code') == 0:
+                for pair in data.get('data', []):
+                    sym = pair.get('symbol', '')
+                    self._pair_info[sym] = {
+                        'min_qty'  : float(pair.get('minTradeVolume', '0.001')),
+                        'precision': int(pair.get('basePrecision', 4)),
+                        'max_qty'  : float(pair.get('maxMarketOrderVolume', '50000')),
+                        'status'   : pair.get('symbolStatus', 'OPEN'),
+                    }
+                self._pair_info_loaded = True
+                logger.info(f"✅ Loaded {len(self._pair_info)} trading pairs")
+        except Exception as e:
+            logger.warning(f"Gagal load pair info: {e}")
+        return self._pair_info
+
+    def _load_saved_positions(self) -> dict:
+        """Load posisi tersimpan dari file."""
+        try:
+            import os, json
+            os.makedirs('data', exist_ok=True)
+            if os.path.exists(self._positions_file):
+                with open(self._positions_file, 'r') as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
+
+    def _save_position(self, symbol: str, data: dict):
+        """Simpan data posisi ke file untuk resume saat restart."""
+        try:
+            import json, os
+            os.makedirs('data', exist_ok=True)
+            self._saved_positions[symbol] = data
+            with open(self._positions_file, 'w') as f:
+                json.dump(self._saved_positions, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Gagal simpan posisi {symbol}: {e}")
+
+    def _remove_saved_position(self, symbol: str):
+        """Hapus posisi dari file saat sudah close."""
+        try:
+            import json
+            self._saved_positions.pop(symbol, None)
+            with open(self._positions_file, 'w') as f:
+                json.dump(self._saved_positions, f, indent=2)
+        except Exception:
+            pass
+
+    def get_min_qty(self, symbol: str) -> tuple:
+        """Return (min_qty, precision) untuk symbol."""
+        self._load_pair_info()
+        sym  = symbol.upper().replace('/USDT','').replace('USDT','') + 'USDT'
+        info = self._pair_info.get(sym, {})
+        return (
+            info.get('min_qty', 0.001),
+            info.get('precision', 4),
+        )
+
+    def round_qty(self, qty: float, symbol: str) -> float:
+        """Bulatkan qty sesuai precision coin. Selalu round DOWN agar risk tidak melebihi target."""
+        min_qty, precision = self.get_min_qty(symbol)
+        import math
+        # Floor bukan round — agar qty tidak pernah melebihi target risk
+        factor = 10 ** precision
+        qty = math.floor(qty * factor) / factor
+        return qty  # Tidak pakai max(qty, min_qty) — kalau di bawah min, place_order yang handle
+
+    def get_balance(self) -> Optional[float]:
+        """Ambil balance USDT available dari Bitunix Futures."""
+        data = self._get("/api/v1/futures/account", {"marginCoin": "USDT"})
+        if data.get('code') == 0:
+            account = data.get('data', {})
+            if isinstance(account, dict):
+                return float(account.get('available', 0))
+            return 0.0
+        logger.error(f"get_balance error: {data.get('msg', 'unknown')}")
+        return None
+
+    def get_positions(self) -> list:
+        """Ambil semua posisi terbuka."""
+        data = self._get("/api/v1/futures/position/get_pending_positions")
+        if data.get('code') == 0:
+            result = data.get('data', [])
+            # API bisa return list langsung atau dict dengan positionList
+            if isinstance(result, list):
+                return result
+            if isinstance(result, dict):
+                return result.get('positionList', [])
+        return []
+
+    def get_open_position(self, symbol: str) -> Optional[dict]:
+        """Ambil posisi terbuka untuk coin tertentu."""
+        positions = self.get_positions()
+        sym = symbol.upper().replace('/USDT', '').replace('USDT', '') + 'USDT'
+        for pos in positions:
+            pos_sym = pos.get('symbol', '').upper()
+            if pos_sym == sym:
+                return pos
+        return None
+
+    # ── SET LEVERAGE ──────────────────────────────────────────
+
+    def set_leverage(self, symbol: str, leverage: int) -> bool:
+        sym  = symbol.upper().replace('/USDT', '').replace('USDT', '') + 'USDT'
+        data = self._post("/api/v1/futures/account/change_leverage", {
+            "symbol"      : sym,
+            "leverage"    : str(leverage),
+            "marginType"  : "CROSS",    # Cross margin
+        })
+        ok = data.get('code') == 0
+        if not ok:
+            logger.warning(f"set_leverage {sym}x{leverage}: {data.get('msg')}")
+        return ok
+
+    # ── PLACE ORDER ───────────────────────────────────────────
+
+    def place_order(self, symbol: str, direction: str,
+                    entry: float, sl: float, tp1: float, tp2: float,
+                    qty: Optional[float] = None,
+                    quality: str = 'GOOD',
+                    signal_data: dict = None,
+                    btc_state: str = 'NEUTRAL') -> dict:
+        """
+        Open posisi futures dengan SL + TP1 + TP2.
+
+        Strategi TP:
+          - TP1 (50% qty) → limit reduce-only order di harga TP1
+          - TP2 (50% qty) → attached TP di order utama
+          - SL → attached SL di order utama (full qty)
+
+        Kalau TP1 kena → 50% posisi close, 50% masih jalan
+        Kalau TP2 kena → sisa 50% close, trade selesai
+        Kalau SL kena   → semua posisi close (full protection)
+
+        Position sizing berdasarkan quality:
+          IDEAL → 1.5x risk (signal terkuat, konfluensi penuh)
+          GOOD  → 1.0x risk (standar)
+        """
+        if not self.is_ready:
+            return {'ok': False, 'msg': 'Auto trade tidak aktif'}
+
+        sym     = symbol.upper().replace('/USDT','').replace('USDT','') + 'USDT'
+        side    = "BUY" if direction == "LONG" else "SELL"
+        is_long = direction == "LONG"
+
+        # Cek circuit breaker — pause setelah consecutive SL
+        if self.is_circuit_breaker_active():
+            remaining = (self._circuit_breaker_until - datetime.now()).seconds // 60
+            return {'ok': False, 'msg': f'⛔ Circuit breaker aktif — pause {remaining} menit lagi ({self._consecutive_losses} SL berturut-turut)'}
+
+        # Cek daily loss limit — sync dari exchange dulu
+        self.sync_daily_loss_from_exchange()
+        if self._is_daily_loss_exceeded():
+            return {'ok': False, 'msg': f'Daily loss limit ${self.max_daily_loss_usd:.0f} tercapai — trading berhenti hari ini'}
+
+        # Cek max open positions
+        open_pos = self.get_positions()
+        max_pos  = self.max_positions   # pakai setting langsung (default 5)
+        if len(open_pos) >= max_pos:
+            return {'ok': False, 'msg': f'Max {max_pos} posisi terbuka'}
+
+        # Cek sudah ada posisi di coin ini
+        if self.get_open_position(symbol):
+            return {'ok': False, 'msg': f'Sudah ada posisi {sym} terbuka — skip'}
+
+        # ── Hitung qty dari nominal risk (USD tetap) ─────────
+        if qty is None:
+            risk_per_unit = abs(entry - sl)
+            if risk_per_unit <= 0:
+                return {'ok': False, 'msg': 'SL sama dengan entry — invalid'}
+
+            # risk_usd = nominal USD yang di-risk (misal $6 atau $3)
+            # Kalau risk_usd tidak di-set, fallback ke % dari balance
+            if self.risk_usd > 0:
+                risk_amount = self.risk_usd
+            else:
+                balance = self.get_balance()
+                if not balance or balance <= 0:
+                    return {'ok': False, 'msg': 'Gagal ambil balance'}
+                risk_amount = balance * (self.risk_pct / 100)
+
+            # Risk scaling berdasarkan balance + quality tier
+            # Tujuan: compound growth — risk naik seiring balance naik
+            # GOOD dan IDEAL pakai risk_usd penuh (bukan hardcode $1/$2)
+            # karena WR setelah filter 60%+ sudah validated.
+            # Balance-based scaling akan dihandle di level atas (risk_usd di .env)
+
+            raw_qty  = risk_amount / risk_per_unit
+            qty      = self.round_qty(raw_qty, symbol)
+            min_qty, _ = self.get_min_qty(symbol)
+
+            if qty <= 0:
+                return {'ok': False, 'msg': f'Qty terlalu kecil: {qty}'}
+            if qty < min_qty:
+                return {'ok': False, 'msg': f'Qty {qty} di bawah minimum {min_qty} untuk {sym}'}
+
+            logger.info(f"💰 {sym} [{quality}] risk=${risk_amount:.2f} entry={entry} sl={sl} → qty={qty}")
+
+        # TP1 = 50% qty (reduce-only), TP2 = sisa 50%
+        _, precision = self.get_min_qty(symbol)
+        qty_tp1 = round(qty * 0.5, precision)
+        qty_tp2 = round(qty - qty_tp1, precision)
+        if qty_tp1 <= 0:
+            qty_tp1 = qty
+            qty_tp2 = 0
+
+        # ── Set leverage ──────────────────────────────────────
+        self.set_leverage(symbol, self.leverage)
+
+        # ── Tentukan order type ───────────────────────────────
+        current_price = self._get_current_price(sym)
+        use_market = (
+            entry == 0 or
+            current_price == 0 or
+            abs(entry - current_price) / max(current_price, 0.000001) < 0.002
+        )
+        order_type = "MARKET" if use_market else "LIMIT"
+
+        # ── STEP 1: Open posisi utama dengan SL + TP2 ────────
+        body = {
+            "symbol"      : sym,
+            "side"        : side,
+            "tradeSide"   : "OPEN",
+            "orderType"   : order_type,
+            "qty"         : str(qty),
+            "reduceOnly"  : False,
+            "effect"      : "GTC",
+            "clientId"    : f"bot_{int(time.time())}",
+            # SL — full protection
+            "slPrice"     : str(round(sl, 8)),
+            "slStopType"  : "MARK_PRICE",
+            "slOrderType" : "MARKET",
+            # TP2 — sisa 50% posisi
+            "tpPrice"     : str(round(tp2, 8)),
+            "tpStopType"  : "MARK",
+            "tpOrderType" : "MARKET",
+        }
+        if order_type == "LIMIT":
+            body["price"] = str(round(entry, 8))
+
+        logger.info(f"📤 Open {sym} {direction} {order_type} qty={qty} SL={sl} TP2={tp2}")
+        result = self._post("/api/v1/futures/trade/place_order", body)
+
+        if result.get('code') != 0:
+            msg = result.get('msg', 'Unknown error')
+            logger.error(f"❌ Open order gagal {sym}: {msg}")
+            return {'ok': False, 'msg': f"Open order gagal: {msg}"}
+
+        order_id = result.get('data', {}).get('orderId', '')
+        logger.info(f"✅ Open order OK: {sym} orderId={order_id}")
+
+        # ── STEP 2: Set TP1 sebagai reduce-only limit order ───
+        tp1_order_id = ''
+        close_side   = "SELL" if is_long else "BUY"
+
+        if order_type == "MARKET":
+            # MARKET order: posisi langsung terbuka → pasang TP1 sekarang
+            if qty_tp1 > 0:
+                for attempt in range(8):
+                    time.sleep(2.0)
+                    pos = self.get_open_position(symbol)
+                    if pos:
+                        pos_id   = pos.get('positionId', '')
+                        tp1_body = {
+                            "symbol"     : sym,
+                            "side"       : close_side,
+                            "tradeSide"  : "CLOSE",
+                            "orderType"  : "LIMIT",
+                            "price"      : str(round(tp1, 8)),
+                            "qty"        : str(qty_tp1),
+                            "positionId" : str(pos_id),
+                            "reduceOnly" : True,
+                            "effect"     : "GTC",
+                            "clientId"   : f"tp1_{int(time.time())}",
+                        }
+                        r = self._post("/api/v1/futures/trade/place_order", tp1_body)
+                        if r.get('code') == 0:
+                            tp1_order_id = r.get('data', {}).get('orderId', '')
+                            logger.info(f"✅ TP1 order OK: {sym} qty={qty_tp1} @ {tp1}")
+                            break
+                        else:
+                            logger.warning(f"⚠️ TP1 attempt {attempt+1} gagal: {r.get('msg','')}")
+                    else:
+                        logger.info(f"⏳ TP1 retry {attempt+1}: posisi belum terbuka")
+
+                if not tp1_order_id:
+                    logger.warning(f"⚠️ TP1 tidak terpasang {sym} — hanya TP2 dan SL aktif")
+
+        else:
+            # LIMIT order: posisi belum terbuka — TP1 dipasang via monitor background
+            # Monitor akan deteksi saat entry kena dan langsung pasang TP1
+            logger.info(f"⏳ LIMIT order {sym} — TP1 akan dipasang otomatis saat entry kena")
+            self._start_limit_entry_monitor(
+                symbol=symbol, direction=direction,
+                entry=entry, sl=sl, tp1=tp1, tp2=tp2,
+                qty_tp1=qty_tp1, close_side=close_side,
+                order_id=order_id,
+            )
+
+        # Simpan data posisi ke file untuk resume saat bot restart
+        clean_sym = sym.replace('USDT', '')
+        self._save_position(clean_sym, {
+            'symbol'   : clean_sym,
+            'direction': direction,
+            'entry'    : entry,
+            'sl'       : sl,
+            'tp1'      : tp1,
+            'tp2'      : tp2,
+            'qty'      : qty,
+            'leverage' : self.leverage,
+            'opened_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+        })
+
+        # ── Log ke learning engine ────────────────────────────
+        # Catat kondisi sinyal saat entry untuk analisa pola nanti
+        try:
+            if signal_data:
+                from learning_engine import get_learning_engine
+                from session_filter import get_current_session
+                le        = get_learning_engine()
+                sess_info = get_current_session()
+                le.log_entry(
+                    symbol    = clean_sym,
+                    direction = direction,
+                    signal    = signal_data,
+                    btc_state = btc_state,
+                    session   = sess_info.get('session', 'UNKNOWN'),
+                    smc       = signal_data.get('_smc', {}),
+                    adx       = signal_data.get('_adx', 0.0),
+                )
+        except Exception as _le_err:
+            logger.debug(f"learning log_entry skip: {_le_err}")
+
+        return {
+            'ok'          : True,
+            'order_id'    : order_id,
+            'tp1_order_id': tp1_order_id,
+            'symbol'      : sym,
+            'direction'   : direction,
+            'qty'         : qty,
+            'qty_tp1'     : qty_tp1,
+            'qty_tp2'     : qty_tp2,
+            'entry'       : entry,
+            'sl'          : sl,
+            'tp1'         : tp1,
+            'tp2'         : tp2,
+            'leverage'    : self.leverage,
+            'risk_pct'    : self.risk_pct,
+            'msg'         : (
+                f"✅ {direction} {sym} terbuka!\n"
+                f"   Qty: {qty} | Leverage: {self.leverage}x | Risk: {self.risk_pct}%\n"
+                f"   SL : {sl}\n"
+                f"   TP1: {tp1} ({qty_tp1} lot — 50%)\n"
+                f"   TP2: {tp2} ({qty_tp2} lot — 50%)\n"
+                f"   🔄 Auto BEP aktif setelah TP1 kena"
+            ),
+        }
+
+    # ── CLOSE POSITION ────────────────────────────────────────
+
+    def close_position(self, symbol: str) -> dict:
+        """Close posisi dengan market order."""
+        sym = symbol.upper().replace('/USDT', '').replace('USDT', '') + 'USDT'
+
+        pos = self.get_open_position(symbol)
+        if not pos:
+            return {'ok': False, 'msg': f'Tidak ada posisi terbuka untuk {sym}'}
+
+        pos_id     = pos.get('positionId', '')
+        qty        = pos.get('qty', '0')
+        side       = pos.get('side', '')
+        close_side = "SELL" if side == "BUY" else "BUY"
+
+        body = {
+            "symbol"    : sym,
+            "side"      : close_side,
+            "tradeSide" : "CLOSE",
+            "orderType" : "MARKET",
+            "qty"       : str(qty),
+            "positionId": str(pos_id),
+            "reduceOnly": True,
+            "effect"    : "GTC",
+            "clientId"  : f"bot_close_{int(time.time())}",
+        }
+
+        result = self._post("/api/v1/futures/trade/place_order", body)
+        if result.get('code') == 0:
+            pnl = float(pos.get('unrealizedPNL', 0))
+            if pnl < 0:
+                self._update_daily_loss_usd(abs(pnl))  # track USD langsung
+                balance = self.get_balance()
+                if balance and balance > 0:
+                    self._update_daily_loss(abs(pnl) / balance * 100)
+            # Hapus dari saved positions
+            clean_sym = sym.replace('USDT', '')
+            self._remove_saved_position(clean_sym)
+            self._active_monitors.discard(clean_sym)
+            return {'ok': True, 'msg': f'Posisi {sym} ditutup. PnL: {pnl:+.2f} USDT'}
+        else:
+            return {'ok': False, 'msg': f"Close gagal: {result.get('msg', 'error')}"}
+
+    def move_sl_to_bep(self, symbol: str, entry_price: float) -> dict:
+        """
+        Geser SL ke harga entry (Break Even Point).
+        Dipanggil otomatis setelah TP1 kena.
+        """
+        sym = symbol.upper().replace('/USDT', '').replace('USDT', '') + 'USDT'
+        pos = self.get_open_position(symbol)
+        if not pos:
+            return {'ok': False, 'msg': f'Posisi {sym} tidak ada (mungkin sudah close)'}
+
+        pos_id = pos.get('positionId', '')
+        sl_str = str(round(entry_price, 8))
+        logger.info(f"🔄 Geser SL {sym} ke BEP {entry_price} (positionId={pos_id})")
+
+        # Step 1: Cancel semua SL aktif untuk posisi ini dulu
+        try:
+            tpsl_data = self._get("/api/v1/futures/tpsl/get_pending_orders",
+                                  {"symbol": sym})
+            tpsl_list = tpsl_data.get('data', [])
+            if isinstance(tpsl_list, list):
+                for order in tpsl_list:
+                    if (order.get('positionId') == str(pos_id) and
+                            order.get('slPrice') is not None):
+                        cancel_id = order.get('id', '')
+                        cancel_r  = self._post(
+                            "/api/v1/futures/tpsl/cancel_order",
+                            {"symbol": sym, "orderId": str(cancel_id)}
+                        )
+                        logger.info(f"Cancel SL {cancel_id}: {cancel_r.get('code')} {cancel_r.get('msg','')}")
+                        time.sleep(0.3)
+            time.sleep(0.5)
+        except Exception as ce:
+            logger.debug(f"Cancel SL error: {ce}")
+
+        # Step 2: Pasang SL BEP baru
+        body = {
+            "symbol"      : sym,
+            "positionId"  : str(pos_id),
+            "slPrice"     : sl_str,
+            "slStopType"  : "MARK_PRICE",
+            "slOrderType" : "MARKET",
+        }
+        result = self._post("/api/v1/futures/tpsl/position/place_order", body)
+        logger.info(f"BEP place_order: code={result.get('code')} msg={result.get('msg','')} orderId={result.get('data',{}).get('orderId','')}")
+
+        if result.get('code') == 0:
+            order_id = result.get('data', {}).get('orderId', '')
+            logger.info(f"✅ SL {sym} BEP terpasang @ {entry_price} (orderId={order_id})")
+            return {'ok': True, 'msg': f'SL BEP terpasang @ {entry_price}'}
+
+        err = result.get('msg', 'error')
+        logger.warning(f"⚠️ GAGAL geser SL {sym} ke BEP: {err}")
+        return {'ok': False, 'msg': f'Gagal geser SL: {err}'}
+
+    def move_sl_trailing(self, symbol: str, new_sl: float) -> dict:
+        """
+        Geser SL ke harga baru (trailing stop).
+        Dipanggil setelah TP1 kena dan harga terus bergerak menguntungkan.
+        """
+        return self.move_sl_to_bep(symbol, new_sl)
+
+    def _start_limit_entry_monitor(self, symbol, direction, entry, sl,
+                                   tp1, tp2, qty_tp1, close_side, order_id):
+        """
+        Monitor background untuk LIMIT order.
+        Tugasnya:
+        1. Tunggu sampai entry kena (posisi terbuka di exchange)
+        2. Pasang TP1 reduce-only setelah posisi terbuka
+        3. Start TP1 monitor untuk geser SL ke BEP saat TP1 kena
+        """
+        import threading
+
+        def _monitor():
+            sym      = symbol.upper().replace('/USDT','').replace('USDT','') + 'USDT'
+            max_wait = 48 * 3600  # tunggu max 48 jam
+            interval = 30         # cek setiap 30 detik
+            elapsed  = 0
+            tp1_placed = False
+
+            logger.info(f"⏳ Limit entry monitor START {sym} @ {entry}")
+
+            while elapsed < max_wait:
+                time.sleep(interval)
+                elapsed += interval
+
+                try:
+                    # Cek apakah posisi sudah terbuka
+                    pos = self.get_open_position(symbol)
+
+                    if pos:
+                        # Posisi terbuka — entry sudah kena!
+                        if not tp1_placed and qty_tp1 > 0:
+                            pos_id = pos.get('positionId', '')
+                            logger.info(f"🎯 LIMIT entry kena {sym} — pasang TP1 @ {tp1}")
+
+                            tp1_body = {
+                                "symbol"     : sym,
+                                "side"       : close_side,
+                                "tradeSide"  : "CLOSE",
+                                "orderType"  : "LIMIT",
+                                "price"      : str(round(tp1, 8)),
+                                "qty"        : str(qty_tp1),
+                                "positionId" : str(pos_id),
+                                "reduceOnly" : True,
+                                "effect"     : "GTC",
+                                "clientId"   : f"tp1_{int(time.time())}",
+                            }
+                            r = self._post("/api/v1/futures/trade/place_order", tp1_body)
+                            if r.get('code') == 0:
+                                tp1_order_id = r.get('data', {}).get('orderId', '')
+                                logger.info(f"✅ TP1 terpasang {sym} @ {tp1} (orderId={tp1_order_id})")
+                                tp1_placed = True
+
+                                # Kirim notif ke Telegram
+                                if self._notify_fn:
+                                    try:
+                                        import asyncio
+                                        loop = asyncio.new_event_loop()
+                                        actual_entry = float(pos.get('avgOpenPrice', entry))
+                                        ico = "🟢" if direction == "LONG" else "🔴"
+                                        msg = (
+                                            "✅ LIMIT ENTRY KENA\n" +
+                                            "=" * 28 + "\n" +
+                                            ico + " " + sym + " " + direction + "\n" +
+                                            "Entry  : " + str(round(actual_entry, 8)) + "\n" +
+                                            "TP1    : " + str(round(tp1, 8)) + "\n" +
+                                            "TP2    : " + str(round(tp2, 8)) + "\n" +
+                                            "SL     : " + str(round(sl, 8)) + "\n\n" +
+                                            "👁️ TP1 monitor aktif — SL geser ke BEP saat TP1 kena"
+                                        )
+                                        loop.run_until_complete(self._notify_fn(msg))
+                                        loop.close()
+                                    except Exception:
+                                        pass
+
+                                # Start TP1 monitor untuk BEP
+                                actual_entry = float(pos.get('avgOpenPrice', entry))
+                                self.start_tp1_monitor(
+                                    symbol=symbol,
+                                    entry=actual_entry,
+                                    tp1=tp1,
+                                    direction=direction,
+                                    notify_fn=self._notify_fn,
+                                )
+                                break  # selesai — tp1 monitor yang lanjut
+
+                            else:
+                                logger.warning(f"⚠️ Gagal pasang TP1 {sym}: {r.get('msg','')}")
+                                # Retry di loop berikutnya
+
+                    else:
+                        # Cek apakah limit order masih pending
+                        pending = self._get("/api/v1/futures/trade/get_pending_orders",
+                                           {"symbol": sym})
+                        orders  = pending.get('data', {})
+                        if isinstance(orders, dict):
+                            order_list = orders.get('orderList', [])
+                        else:
+                            order_list = []
+
+                        still_pending = any(
+                            o.get('orderId') == str(order_id)
+                            for o in order_list
+                        )
+
+                        if not still_pending and not pos:
+                            # Order sudah tidak ada dan posisi tidak terbuka
+                            # Kemungkinan order di-cancel manual atau expired
+                            logger.info(f"⚠️ Limit order {sym} tidak lagi pending — stop monitor")
+                            break
+
+                except Exception as e:
+                    logger.debug(f"Limit entry monitor {sym} error: {e}")
+
+            logger.info(f"⏳ Limit entry monitor SELESAI {sym}")
+
+        t = threading.Thread(
+            target=_monitor, daemon=True,
+            name=f"limit_monitor_{symbol}"
+        )
+        t.start()
+        logger.info(f"⏳ Limit entry monitor started untuk {symbol}")
+
+    def resume_monitors_on_startup(self):
+        """
+        Resume semua TP1 monitor untuk posisi yang masih terbuka setelah restart.
+        Dipanggil satu kali saat bot start.
+        """
+        if not self.is_ready:
+            return
+
+        try:
+            positions = self.get_positions()
+            if not positions:
+                return
+
+            resumed = 0
+            for pos in positions:
+                sym   = pos.get('symbol', '').replace('USDT', '')
+                side  = pos.get('side', '')
+                direction = 'LONG' if side in ('BUY', 'LONG') else 'SHORT'
+                entry = float(pos.get('avgOpenPrice', 0))
+
+                if not entry or sym in self._active_monitors:
+                    continue
+
+                # Ambil TP1 dari saved positions
+                saved = self._saved_positions.get(sym, {})
+                tp1   = float(saved.get('tp1', 0))
+
+                # Kalau tidak ada TP1 tersimpan — hitung dari risk 1.5x
+                if not tp1:
+                    sl  = float(saved.get('sl', 0))
+                    if sl:
+                        risk = abs(entry - sl)
+                        tp1  = entry + risk * 1.5 if direction == 'LONG' else entry - risk * 1.5
+                    else:
+                        # Fallback: 1.5% dari entry
+                        tp1 = entry * 1.015 if direction == 'LONG' else entry * 0.985
+
+                logger.info(f"🔄 Resume monitor {sym} {direction} entry={entry} tp1={tp1}")
+                self.start_tp1_monitor(sym, entry, tp1, direction, notify_fn=None)
+                resumed += 1
+
+            if resumed > 0:
+                logger.info(f"✅ {resumed} TP1 monitor di-resume setelah restart")
+
+        except Exception as e:
+            logger.error(f"resume_monitors_on_startup error: {e}")
+
+    def start_tp1_monitor(self, symbol: str, entry: float, tp1: float,
+                          direction: str, notify_fn=None, level_price: float = 0.0):
+        """
+        Monitor posisi di background — kalau TP1 kena, geser SL ke BEP.
+
+        notify_fn: fungsi async untuk kirim notifikasi ke Telegram (opsional)
+        level_price: harga level S/R yang jadi dasar sinyal (untuk level_memory)
+        """
+        import threading
+
+        def _monitor():
+            sym          = symbol.upper().replace('/USDT','').replace('USDT','') + 'USDT'
+            is_long      = direction == 'LONG'
+            max_wait     = 72 * 3600
+            interval     = 30
+            elapsed      = 0
+            bep_done     = False
+            stage2_done  = False
+            stage3_done  = False
+            initial_qty  = None   # catat qty awal posisi
+            bep_attempts = 0      # batasi percobaan BEP
+
+            logger.info(f"👁️ Monitor TP1 {sym}: target={tp1}, BEP={entry}")
+
+            while elapsed < max_wait:
+                time.sleep(interval)
+                elapsed += interval
+
+                try:
+                    pos = self.get_open_position(symbol)
+                    if not pos:
+                        logger.info(f"👁️ Monitor {sym}: posisi sudah close — stop")
+                        break
+
+                    current = self._get_current_price(sym)
+                    if current <= 0:
+                        continue
+
+                    pos_qty = float(pos.get('qty', 0))
+
+                    # Catat qty awal sekali saja
+                    if initial_qty is None:
+                        initial_qty = pos_qty
+                        logger.info(f"👁️ {sym} initial qty={initial_qty}")
+                        continue
+
+                    # ── Deteksi TP1 kena ─────────────────────────
+                    price_hit   = (is_long and current >= tp1) or (not is_long and current <= tp1)
+                    qty_reduced = pos_qty > 0 and pos_qty < initial_qty * 0.7
+
+                    tp1_hit = price_hit or qty_reduced
+
+                    # ── TRAILING SL STAGES ────────────────────────
+                    # Stage 1 (TP1 hit): SL → BEP (break even)
+                    # Stage 2 (harga +1.5R dari entry): SL → +0.5R
+                    # Stage 3 (harga +2.0R dari entry): SL → +1.0R (lock profit penuh)
+                    risk_dist = abs(tp1 - entry)   # 1R = jarak entry ke TP1
+
+                    if tp1_hit and not bep_done and bep_attempts == 0:
+                        bep_attempts += 1
+                        logger.info(f"🎯 TP1 {sym} kena @ {current} — geser SL ke BEP {entry}")
+                        result = self.move_sl_to_bep(symbol, entry)
+                        if result.get('ok'):
+                            bep_done = True
+                            logger.info(f"✅ BEP terpasang {sym} @ {entry} — monitor lanjut TP2")
+                        else:
+                            bep_attempts = 0
+                            logger.warning(f"⚠️ BEP gagal {sym}: {result.get('msg')} — retry berikutnya")
+                            continue
+
+                        # Notif TP1 kena — hanya sekali
+                        if notify_fn and callable(notify_fn):
+                            try:
+                                import asyncio
+                                loop = asyncio.new_event_loop()
+                                loop.run_until_complete(notify_fn(
+                                    "🎯 TP1 KENA — " + sym + "\n" +
+                                    "   Harga : " + str(round(current, 8)) + "\n" +
+                                    "   BEP   : " + str(round(entry, 8)) + "\n" +
+                                    "   50% profit aman, sisanya jalan ke TP2"
+                                ))
+                                loop.close()
+                            except Exception:
+                                pass
+
+                    # ── Stage 2: harga +1.5R dari entry → SL ke +0.5R ────
+                    if bep_done and not stage2_done and risk_dist > 0:
+                        trigger_2  = entry + risk_dist * 1.5 if is_long else entry - risk_dist * 1.5
+                        sl_lock_2  = entry + risk_dist * 0.5 if is_long else entry - risk_dist * 0.5
+                        stage2_hit = (is_long and current >= trigger_2) or (not is_long and current <= trigger_2)
+                        if stage2_hit:
+                            logger.info(f"📈 Stage2 {sym}: harga {current} melewati +1.5R — geser SL ke +0.5R ({sl_lock_2:.6g})")
+                            r2 = self.move_sl_trailing(symbol, sl_lock_2)
+                            if r2.get('ok'):
+                                stage2_done = True
+                                logger.info(f"✅ Stage2 SL terpasang {sym} @ {sl_lock_2:.6g}")
+                                if notify_fn and callable(notify_fn):
+                                    try:
+                                        import asyncio
+                                        loop = asyncio.new_event_loop()
+                                        loop.run_until_complete(notify_fn(
+                                            "📈 TRAILING SL STAGE 2 — " + sym + "\n" +
+                                            "   Harga : " + str(round(current, 8)) + "\n" +
+                                            "   SL baru: " + str(round(sl_lock_2, 8)) + " (+0.5R terkunci)"
+                                        ))
+                                        loop.close()
+                                    except Exception:
+                                        pass
+                            else:
+                                logger.warning(f"⚠️ Stage2 SL gagal {sym}: {r2.get('msg')}")
+
+                    # ── Stage 3: harga +2.0R dari entry → SL ke +1.0R ────
+                    if stage2_done and not stage3_done and risk_dist > 0:
+                        trigger_3  = entry + risk_dist * 2.0 if is_long else entry - risk_dist * 2.0
+                        sl_lock_3  = entry + risk_dist * 1.0 if is_long else entry - risk_dist * 1.0
+                        stage3_hit = (is_long and current >= trigger_3) or (not is_long and current <= trigger_3)
+                        if stage3_hit:
+                            logger.info(f"🚀 Stage3 {sym}: harga {current} melewati +2.0R — SL ke +1.0R ({sl_lock_3:.6g}), profit terkunci penuh")
+                            r3 = self.move_sl_trailing(symbol, sl_lock_3)
+                            if r3.get('ok'):
+                                stage3_done = True
+                                logger.info(f"✅ Stage3 SL terpasang {sym} @ {sl_lock_3:.6g} — profit +1R aman")
+                                if notify_fn and callable(notify_fn):
+                                    try:
+                                        import asyncio
+                                        loop = asyncio.new_event_loop()
+                                        loop.run_until_complete(notify_fn(
+                                            "🚀 TRAILING SL STAGE 3 — " + sym + "\n" +
+                                            "   Harga : " + str(round(current, 8)) + "\n" +
+                                            "   SL baru: " + str(round(sl_lock_3, 8)) + " (+1R terkunci)\n" +
+                                            "   Profit +1R sudah aman apapun yang terjadi!"
+                                        ))
+                                        loop.close()
+                                    except Exception:
+                                        pass
+                            else:
+                                logger.warning(f"⚠️ Stage3 SL gagal {sym}: {r3.get('msg')}")
+
+                except Exception as e:
+                    logger.debug(f"Monitor {sym} error: {e}")
+                    continue
+
+            # ── Deteksi hasil akhir posisi untuk circuit breaker ──
+            try:
+                history = self._get("/api/v1/futures/position/get_history_positions", {
+                    "symbol": sym, "limit": "5"
+                })
+                positions_h = []
+                raw_h = history.get('data', [])
+                if isinstance(raw_h, dict):
+                    positions_h = raw_h.get('positionList', raw_h.get('list', []))
+                elif isinstance(raw_h, list):
+                    positions_h = raw_h
+
+                if positions_h:
+                    last_pos  = positions_h[0]
+                    last_pnl  = float(last_pos.get('pnl', last_pos.get('realizedPnl', 0)))
+                    trade_won = last_pnl > 0
+                    self.record_trade_result(
+                        trade_won,
+                        symbol=symbol,
+                        direction=direction,
+                        pnl_usd=last_pnl,
+                        notify_fn=notify_fn,
+                        level_price=level_price,
+                    )
+                    logger.info(f"📊 Trade {sym} selesai — {'PROFIT' if trade_won else 'LOSS'} ${last_pnl:.2f}")
+            except Exception as _e:
+                logger.debug(f"record_trade_result error: {_e}")
+
+            logger.info(f"👁️ Monitor {sym} selesai (elapsed {elapsed//3600:.0f}h)")
+            self._active_monitors.discard(symbol)
+
+        # Cegah double monitor untuk coin yang sama
+        if symbol in self._active_monitors:
+            logger.info(f"👁️ Monitor {symbol} sudah aktif — skip")
+            return
+
+        self._active_monitors.add(symbol)
+        thread = threading.Thread(target=_monitor, daemon=True, name=f"monitor_{symbol}")
+        thread.start()
+        logger.info(f"👁️ TP1 monitor started untuk {symbol}")
+
+    # ── HELPERS ───────────────────────────────────────────────
+
+    def _get_current_price(self, symbol: str) -> float:
+        data = self._get("/api/v1/futures/market/tickers", {"symbols": symbol})
+        if data.get('code') == 0:
+            raw = data.get('data', [])
+            # API bisa return list langsung atau dict dengan tickerList
+            if isinstance(raw, list):
+                tickers = raw
+            elif isinstance(raw, dict):
+                tickers = raw.get('tickerList', [])
+            else:
+                tickers = []
+            if tickers:
+                return float(tickers[0].get('lastPrice', 0))
+        return 0.0
+
+    def _get_monthly_period(self):
+        """Return string YYYY-MM sebagai identifier periode bulan."""
+        from datetime import datetime as dt
+        return dt.now().strftime('%Y-%m')
+
+    def sync_monthly_pnl_from_exchange(self):
+        """
+        Sync PnL bulanan — match persis dengan tampilan Bitunix.
+        Ambil dari tanggal 1 bulan ini jam 00:00, tanpa filter tambahan.
+        """
+        try:
+            from datetime import datetime as dt
+            now = dt.now()
+            # Awal bulan tanggal 1 jam 00:00 — sama dengan Bitunix
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            start_ts    = int(month_start.timestamp() * 1000)
+
+            data = self._get("/api/v1/futures/position/get_history_positions", {
+                "startTime": str(start_ts),
+                "limit"    : "200",  # limit lebih besar agar semua trade masuk
+            })
+
+            if data.get('code') != 0:
+                return
+
+            raw = data.get('data', [])
+            if isinstance(raw, dict):
+                positions = raw.get('positionList', raw.get('list', []))
+            elif isinstance(raw, list):
+                positions = raw
+            else:
+                return
+
+            total_profit = 0.0
+            total_loss   = 0.0
+            trades       = 0
+            wins         = 0
+
+            # Filter by mtime (waktu TUTUP) — hanya trade yang ditutup bulan ini
+            for pos in positions:
+                mtime = int(pos.get('mtime', 0))
+                if mtime > 0 and mtime < start_ts:
+                    continue  # ditutup sebelum awal bulan — skip
+                pnl = float(pos.get('realizedPNL', 0))
+                trades += 1
+                if pnl > 0:
+                    total_profit += pnl
+                    wins += 1
+                elif pnl < 0:
+                    total_loss += abs(pnl)
+
+            self._monthly_profit_usd = total_profit
+            self._monthly_loss_usd   = total_loss
+            self._monthly_pnl_usd    = total_profit - total_loss
+            self._monthly_trades     = trades
+            self._monthly_wins       = wins
+            self._monthly_period     = self._get_monthly_period()
+
+            logger.info(f"📊 Monthly: {trades} trades | +${total_profit:.2f} -${total_loss:.2f} net=${self._monthly_pnl_usd:.2f}")
+
+        except Exception as e:
+            logger.debug(f"sync_monthly error: {e}")
+
+    def sync_yearly_pnl_from_exchange(self):
+        """Sync PnL tahunan — dari 1 Januari tahun ini jam 00:00."""
+        try:
+            from datetime import datetime as dt
+            now        = dt.now()
+            year_start = now.replace(month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+            start_ts   = int(year_start.timestamp() * 1000)
+
+            data = self._get("/api/v1/futures/position/get_history_positions", {
+                "startTime": str(start_ts),
+                "limit"    : "500",
+            })
+            if data.get('code') != 0:
+                return
+
+            raw = data.get('data', [])
+            if isinstance(raw, dict):
+                positions = raw.get('positionList', raw.get('list', []))
+            elif isinstance(raw, list):
+                positions = raw
+            else:
+                return
+
+            total_profit = total_loss = trades = wins = 0.0
+            for pos in positions:
+                pnl = float(pos.get('realizedPNL', 0))
+                trades += 1
+                if pnl > 0:
+                    total_profit += pnl; wins += 1
+                elif pnl < 0:
+                    total_loss += abs(pnl)
+
+            self._yearly_profit_usd = total_profit
+            self._yearly_loss_usd   = total_loss
+            self._yearly_pnl_usd    = total_profit - total_loss
+            self._yearly_trades     = int(trades)
+            self._yearly_wins       = int(wins)
+            logger.info(f"📊 Yearly: {int(trades)} trades | +${total_profit:.2f} -${total_loss:.2f} net=${self._yearly_pnl_usd:.2f}")
+
+        except Exception as e:
+            logger.debug(f"sync_yearly error: {e}")
+
+    def _get_trade_date(self):
+        """Trade date berdasarkan jam 8 pagi — sebelum jam 8 masih dianggap hari kemarin."""
+        from datetime import datetime as dt, timedelta
+        now = dt.now()
+        if now.hour < 8:
+            return (now - timedelta(days=1)).date()
+        return now.date()
+
+    # ── Circuit Breaker ───────────────────────────────────────
+
+    def is_circuit_breaker_active(self) -> bool:
+        """Return True kalau trading sedang di-pause karena consecutive SL."""
+        if self._circuit_breaker_until is None:
+            return False
+        if datetime.now() >= self._circuit_breaker_until:
+            self._circuit_breaker_until  = None
+            self._consecutive_losses     = 0
+            logger.info("✅ Circuit breaker selesai — trading resume")
+            return False
+        return True
+
+    def circuit_breaker_status(self) -> str:
+        """Return string status circuit breaker untuk Telegram."""
+        if not self.is_circuit_breaker_active():
+            return f"✅ Normal ({self._consecutive_losses}/{self.circuit_breaker_max} SL)"
+        remaining = (self._circuit_breaker_until - datetime.now()).seconds // 60
+        return f"⛔ PAUSE {remaining} menit lagi ({self._consecutive_losses} SL berturut-turut)"
+
+    def record_trade_result(self, won: bool,
+                            symbol: str = '', direction: str = '',
+                            pnl_usd: float = 0.0,
+                            notify_fn=None,
+                            level_price: float = 0.0):
+        """
+        Catat hasil trade untuk circuit breaker + learning engine + level memory.
+        Dipanggil setelah posisi close (win/loss diketahui).
+        """
+        outcome = 'TP1' if won else 'SL'
+
+        if won:
+            if self._consecutive_losses > 0:
+                logger.info(f"✅ Trade profit — reset consecutive loss counter ({self._consecutive_losses} → 0)")
+            self._consecutive_losses = 0
+        else:
+            self._consecutive_losses += 1
+            logger.info(f"❌ SL #{self._consecutive_losses} — circuit breaker threshold={self.circuit_breaker_max}")
+            if self._consecutive_losses >= self.circuit_breaker_max:
+                pause_until = datetime.now().replace(microsecond=0)
+                from datetime import timedelta
+                pause_until += timedelta(hours=self.circuit_breaker_pause)
+                self._circuit_breaker_until = pause_until
+                logger.warning(
+                    f"⛔ CIRCUIT BREAKER AKTIF — {self._consecutive_losses} SL berturut-turut. "
+                    f"Trading di-pause sampai {pause_until.strftime('%H:%M')}"
+                )
+
+        # ── Log outcome ke learning engine + kirim post-mortem ──
+        if symbol and direction:
+            try:
+                from learning_engine import get_learning_engine
+                le = get_learning_engine()
+                le.log_outcome(symbol, direction, outcome, pnl_usd)
+
+                # Post-mortem hanya untuk SL
+                if not won:
+                    msg = le.generate_postmortem(symbol, direction, 'SL', pnl_usd)
+                    if msg and notify_fn:
+                        try:
+                            import asyncio
+                            asyncio.run_coroutine_threadsafe(
+                                notify_fn(msg), asyncio.get_event_loop())
+                        except Exception:
+                            pass
+                    if msg:
+                        logger.info(f"Post-mortem {symbol} {direction}:\n{msg}")
+
+                # Setelah cukup data → auto-tune parameter
+                stats = le.get_quick_stats()
+                if stats['total'] >= 10 and stats['total'] % 5 == 0:
+                    le.auto_tune()
+
+            except Exception as _e:
+                logger.debug(f"learning record_trade_result: {_e}")
+
+        # ── Catat level memory (apakah level S/R ini bertahan atau tembus) ──
+        if symbol and direction and level_price > 0:
+            try:
+                from level_memory import get_level_memory
+                mem = get_level_memory()
+                mem.auto_record_from_signal(symbol, level_price, 0.0, direction, pnl_usd)
+                logger.debug(f"level_memory recorded {symbol} @ {level_price} — {'held' if won else 'broke'}")
+            except Exception as _e:
+                logger.debug(f"level_memory record error: {_e}")
+
+    def _is_daily_loss_exceeded(self) -> bool:
+        trade_date = self._get_trade_date()
+        if self._daily_loss_date != trade_date:
+            self._daily_loss_pct  = 0.0
+            self._daily_loss_usd  = 0.0
+            self._daily_loss_date = trade_date
+            logger.info(f"📅 Daily loss reset untuk periode {trade_date}")
+        return self._daily_loss_usd >= self.max_daily_loss_usd
+
+    def sync_daily_loss_from_exchange(self):
+        """
+        Sync daily loss dari history posisi di exchange.
+        Hanya hitung posisi yang ditutup HARI INI (sejak tengah malam).
+        """
+        try:
+            from datetime import datetime as dt
+            # Reset dulu kalau hari berbeda
+            trade_date = self._get_trade_date()
+            if self._daily_loss_date != trade_date:
+                self._daily_loss_usd  = 0.0
+                self._daily_loss_pct  = 0.0
+                self._daily_loss_date = trade_date
+                logger.info(f"📅 Daily loss reset — periode {trade_date}")
+
+            # Reset harian jam 08:00 pagi (bukan tengah malam)
+            now = dt.now()
+            if now.hour < 8:
+                # Sebelum jam 8 — pakai kemarin jam 8
+                reset_time = now.replace(hour=8, minute=0, second=0, microsecond=0)
+                from datetime import timedelta
+                reset_time = reset_time - timedelta(days=1)
+            else:
+                reset_time = now.replace(hour=8, minute=0, second=0, microsecond=0)
+            today_start = int(reset_time.timestamp() * 1000)
+
+            data = self._get("/api/v1/futures/position/get_history_positions", {
+                "startTime": str(today_start),
+                "limit"    : "50",
+            })
+
+            if data.get('code') != 0:
+                return
+
+            raw = data.get('data', [])
+            if isinstance(raw, dict):
+                positions = raw.get('positionList', raw.get('list', []))
+            elif isinstance(raw, list):
+                positions = raw
+            else:
+                return
+
+            total_loss_usd   = 0.0
+            total_profit_usd = 0.0
+            count = 0
+            for pos in positions:
+                # Filter manual pakai mtime (waktu TUTUP) — API filter pakai ctime (buka)
+                mtime = int(pos.get('mtime', 0))
+                if mtime > 0 and mtime < today_start:
+                    continue  # ditutup sebelum periode hari ini — skip
+
+                pnl = float(pos.get('realizedPNL', 0))
+                count += 1
+                if pnl < 0:
+                    total_loss_usd += abs(pnl)
+                elif pnl > 0:
+                    total_profit_usd += pnl
+
+            net_loss = max(0.0, total_loss_usd - total_profit_usd)
+
+            trade_date = self._get_trade_date()
+            if self._daily_loss_date != trade_date:
+                self._daily_loss_usd  = 0.0
+                self._daily_loss_pct  = 0.0
+                self._daily_loss_date = trade_date
+
+            self._daily_loss_usd = net_loss
+            logger.info(f"📊 Daily sync ({count} trades sejak jam 8): loss=${total_loss_usd:.2f} profit=${total_profit_usd:.2f} net=${net_loss:.2f}")
+
+        except Exception as e:
+            logger.debug(f"sync_daily_loss error: {e}")
+
+    def _update_daily_loss(self, loss_pct: float):
+        """Update daily loss tracker. loss_pct dalam persen dari balance."""
+        if self._daily_loss_date != date.today():
+            self._daily_loss_pct  = 0.0
+            self._daily_loss_usd  = 0.0
+            self._daily_loss_date = date.today()
+        self._daily_loss_pct += loss_pct
+
+    def _update_daily_loss_usd(self, loss_usd: float):
+        """Update daily loss tracker dengan nominal USD."""
+        if self._daily_loss_date != date.today():
+            self._daily_loss_pct  = 0.0
+            self._daily_loss_usd  = 0.0
+            self._daily_loss_date = date.today()
+        if loss_usd > 0:
+            self._daily_loss_usd += loss_usd
+            logger.info(f"📉 Daily loss: ${self._daily_loss_usd:.2f} / ${self.max_daily_loss_usd:.2f}")
+
+    def get_status(self) -> str:
+        """Ringkasan status untuk Telegram."""
+        if not self.is_ready:
+            return (
+                "🔴 AUTO TRADE: NONAKTIF\n"
+                "Set TRADE_ENABLED=true di .env untuk aktifkan"
+            )
+
+        balance   = self.get_balance()
+        positions = self.get_positions()
+        self.sync_daily_loss_from_exchange()  # sync dari exchange dulu
+        daily_ok   = not self._is_daily_loss_exceeded()
+        daily_icon = "✅" if daily_ok else "🚫 LIMIT TERCAPAI"
+        bal_str    = f"${balance:,.2f}" if balance is not None else "Error (cek API key)"
+        # Risk display — reflect actual risk_usd setting dari .env
+        if self.risk_usd > 0:
+            risk_display = f"${self.risk_usd:.0f} flat per trade"
+        else:
+            risk_display = f"{self.risk_pct:.1f}% balance per trade"
+
+        max_pos_dyn = self.max_positions
+
+        # Sync monthly data
+        self.sync_monthly_pnl_from_exchange()
+        monthly_ico  = "✅" if self._monthly_pnl_usd >= 0 else "❌"
+        monthly_wr   = (self._monthly_wins / self._monthly_trades * 100) if self._monthly_trades > 0 else 0
+
+        # Sync yearly juga
+        self.sync_yearly_pnl_from_exchange()
+        yearly_ico = "✅" if self._yearly_pnl_usd >= 0 else "❌"
+        yearly_wr  = (self._yearly_wins / self._yearly_trades * 100) if self._yearly_trades > 0 else 0
+        yearly_losses = self._yearly_trades - self._yearly_wins
+
+        cb_status = self.circuit_breaker_status()
+        text = (
+            f"🟢 AUTO TRADE: AKTIF\n"
+            f"================================\n"
+            f"Balance      : {bal_str} USDT\n"
+            f"Risk/trade   : {risk_display}\n"
+            f"Leverage     : {self.leverage}x\n"
+            f"Max posisi   : {max_pos_dyn}\n"
+            f"Net loss hari: ${self._daily_loss_usd:.2f} / ${self.max_daily_loss_usd:.2f} {daily_icon}\n"
+            f"Posisi aktif : {len(positions)}/{max_pos_dyn}\n"
+            f"Monitor aktif: {len(self._active_monitors)} coin\n"
+            f"Circuit break: {cb_status}\n"
+            f"\n📅 BULANAN\n"
+            f"--------------------------------\n"
+            f"Net PnL : {monthly_ico} ${self._monthly_pnl_usd:+.2f} USDT\n"
+            f"Profit  : +${self._monthly_profit_usd:.2f} | Loss: -${self._monthly_loss_usd:.2f}\n"
+            f"Trades  : {self._monthly_trades} ({self._monthly_wins}W/{self._monthly_trades - self._monthly_wins}L) WR {monthly_wr:.0f}%\n"
+            f"\n📆 TAHUNAN\n"
+            f"--------------------------------\n"
+            f"Net PnL : {yearly_ico} ${self._yearly_pnl_usd:+.2f} USDT\n"
+            f"Profit  : +${self._yearly_profit_usd:.2f} | Loss: -${self._yearly_loss_usd:.2f}\n"
+            f"Trades  : {self._yearly_trades} ({self._yearly_wins}W/{yearly_losses}L) WR {yearly_wr:.0f}%\n"
+        )
+
+        if positions:
+            text += "\n📊 Posisi Terbuka:\n"
+            for pos in positions:
+                sym       = pos.get('symbol', '')
+                side      = pos.get('side', '')       # BUY atau SELL
+                qty_str   = pos.get('qty', '0')
+                qty       = float(qty_str)
+                entry     = float(pos.get('avgOpenPrice', 0))
+                pnl       = float(pos.get('unrealizedPNL', 0))
+                lev       = int(pos.get('leverage', self.leverage))
+                # markPrice tidak ada di API — hitung dari unrealizedPNL
+                # mark = entry + pnl/qty untuk LONG, entry - pnl/qty untuk SHORT
+                try:
+                    if qty > 0 and entry > 0:
+                        if side == 'BUY':
+                            mark = entry + (pnl / qty)
+                        else:
+                            mark = entry - (pnl / qty)
+                    else:
+                        mark = entry
+                except Exception:
+                    mark = entry
+                # Hitung % PnL dari margin
+                margin = float(pos.get('margin', 0))
+                pct    = (pnl / margin * 100) if margin > 0 else 0
+                # Direction label
+                direction = 'LONG' if side in ('BUY', 'LONG') else 'SHORT'
+                ico   = "🟢" if side == "BUY" else "🔴"
+                mon   = "👁️" if sym.replace('USDT','') in self._active_monitors else ""
+                text += (
+                    f"  {ico} {sym} {direction} x{lev} {mon}\n"
+                    f"     Entry : {entry}\n"
+                    f"     Mark  : {mark:.6f}\n"
+                    f"     Qty   : {qty} | PnL: {pnl:+.4f} USDT ({pct:+.1f}%)\n"
+                )
+        elif not positions:
+            text += "\nTidak ada posisi terbuka."
+
+        return text

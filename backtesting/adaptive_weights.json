@@ -1,0 +1,48 @@
+{
+  "factor_weights": {
+    "sr_strong": 1.58,
+    "sr_very_strong": 1.2,
+    "htf_choch": 1.12,
+    "ema_bullish": 1.19,
+    "premium_zone": 1.13,
+    "rsi_overbought": 1.09,
+    "htf_ema_bear": 1.09,
+    "choch": 1.01,
+    "ema_bearish": 1.06,
+    "bos": 1.0,
+    "discount_zone": 0.98,
+    "fvg": 0.95,
+    "phase_distribution": 0.99,
+    "fresh_level": 0.93,
+    "htf_ema_bull": 0.73,
+    "rsi_oversold": 0.74,
+    "orderflow_bull": 0.72,
+    "phase_accumulation": 0.63,
+    "htf_bos": 0.73,
+    "ltf_trigger": 0.85,
+    "orderflow_bear": 0.68,
+    "ema_slight": 0.5,
+    "phase_markup": 0.55
+  },
+  "dead_zone_scores": [
+    10,
+    16,
+    17,
+    20,
+    21,
+    22,
+    24,
+    28,
+    29
+  ],
+  "sweet_spot_scores": [
+    8,
+    9,
+    12,
+    23,
+    27,
+    31
+  ],
+  "generated_at": "2026-03-22T23:40:29.948986",
+  "notes": "Weight > 1.0 = faktor prediktif. Weight < 1.0 = kurangi bobot."
+}

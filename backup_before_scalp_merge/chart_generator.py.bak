@@ -1,0 +1,655 @@
+"""
+chart_generator.py — Professional-grade signal chart untuk Telegram.
+
+Tampilan seperti analisa trader profesional:
+  1. Candlestick OHLCV (dark theme seperti TradingView)
+  2. EMA 8, 21, 50
+  3. Volume bars (warna + spike highlight)
+  4. Order Blocks  — kotak hijau/merah dengan label OB
+  5. FVG / Imbalance zones — zona ketidakseimbangan harga
+  6. Trendlines — otomatis dari swing high/low
+  7. BOS/CHoCH markers — penanda struktur pasar
+  8. Liquidity pools — Equal Highs/Lows (target likuiditas)
+  9. S&R zones utama
+  10. Entry/SL/TP levels dengan shading R:R
+  11. RSI panel (14) dengan zona OB/OS
+  12. Info strip — confluence score, phase, SMC bias
+"""
+
+import os
+import logging
+import numpy as np
+import pandas as pd
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import matplotlib.gridspec as gridspec
+from matplotlib.lines import Line2D
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+# ── Warna tema dark (TradingView-style) ─────────────────────────
+DARK_BG     = '#131722'
+PANEL_BG    = '#1E222D'
+GRID_COLOR  = '#2A2E39'
+TEXT_COLOR  = '#D1D4DC'
+DIM_TEXT    = '#787B86'
+GREEN       = '#26A69A'
+RED         = '#EF5350'
+BULL_BODY   = '#26A69A'
+BEAR_BODY   = '#EF5350'
+EMA8_CLR    = '#FF6B35'   # orange
+EMA21_CLR   = '#00BCD4'   # cyan
+EMA50_CLR   = '#9C27B0'   # purple
+ENTRY_CLR   = '#FFEB3B'   # yellow
+SL_CLR      = '#F44336'
+TP1_CLR     = '#4CAF50'
+TP2_CLR     = '#8BC34A'
+OB_BULL_CLR = '#1B5E20'   # gelap hijau (bullish OB background)
+OB_BEAR_CLR = '#B71C1C'   # gelap merah (bearish OB background)
+FVG_BULL_CLR= '#00695C'   # teal gelap (bullish FVG)
+FVG_BEAR_CLR= '#880E4F'   # pink gelap (bearish FVG)
+LIQ_CLR     = '#FFF176'   # kuning muda (liquidity line)
+BOS_CLR     = '#42A5F5'   # biru (BOS marker)
+CHOCH_CLR   = '#AB47BC'   # ungu (CHoCH marker)
+TRENDLINE_UP   = '#4DB6AC'  # hijau teal
+TRENDLINE_DOWN = '#EF9A9A'  # merah muda
+
+
+# ── Helper ──────────────────────────────────────────────────────
+def _fmt(p: float) -> str:
+    if p == 0:      return '0'
+    if p >= 10000:  return f"{p:,.0f}"
+    if p >= 100:    return f"{p:,.2f}"
+    if p >= 1:      return f"{p:.4f}"
+    return f"{p:.6f}"
+
+def _calc_rsi(closes: np.ndarray, period: int = 14) -> np.ndarray:
+    delta = np.diff(closes, prepend=closes[0])
+    gain  = np.where(delta > 0, delta, 0.0)
+    loss  = np.where(delta < 0, -delta, 0.0)
+    avg_g = np.zeros_like(closes)
+    avg_l = np.zeros_like(closes)
+    avg_g[period] = np.mean(gain[1:period+1])
+    avg_l[period] = np.mean(loss[1:period+1])
+    for i in range(period + 1, len(closes)):
+        avg_g[i] = (avg_g[i-1] * (period - 1) + gain[i]) / period
+        avg_l[i] = (avg_l[i-1] * (period - 1) + loss[i]) / period
+    rs  = np.where(avg_l == 0, 100.0, avg_g / avg_l)
+    rsi = 100.0 - (100.0 / (1.0 + rs))
+    rsi[:period] = 50.0
+    return rsi
+
+
+def generate_signal_chart(
+    df:          pd.DataFrame,
+    symbol:      str,
+    tf:          str,
+    signal:      dict,
+    support:     dict  = None,
+    resistance:  dict  = None,
+    ema_cross:   dict  = None,
+    structure:   str   = 'SIDEWAYS',
+    save_path:   str   = None,
+    smc:         dict  = None,
+) -> str:
+    """
+    Generate chart PNG profesional dan return path file-nya.
+
+    Parameter baru dibanding versi lama:
+        smc  — full SMC dict dari analyze_coin (order blocks, FVG, BOS, liquidity, dll)
+    """
+    if df is None or len(df) < 10:
+        return None
+
+    try:
+        # ── Data ──────────────────────────────────────────────────
+        plot_df = df.tail(100).copy().reset_index(drop=True)
+        n       = len(plot_df)
+        xs      = np.arange(n)
+        offset  = len(df) - n       # untuk konversi indeks absolut → relatif
+
+        closes  = plot_df['close'].values
+        opens   = plot_df['open'].values
+        highs   = plot_df['high'].values
+        lows    = plot_df['low'].values
+        vols    = plot_df['volume'].values
+
+        price_range = highs.max() - lows.min()
+        curr_price  = closes[-1]
+
+        def _ema(series, p):
+            return series.ewm(span=p, adjust=False).mean()
+
+        e8  = _ema(plot_df['close'], 8).values
+        e21 = _ema(plot_df['close'], 21).values
+        e50 = _ema(plot_df['close'], 50).values
+        rsi = _calc_rsi(closes)
+
+        # ── Layout ────────────────────────────────────────────────
+        fig = plt.figure(figsize=(16, 10), facecolor=DARK_BG)
+        gs  = gridspec.GridSpec(
+            3, 1,
+            hspace=0.04,
+            height_ratios=[4.5, 0.8, 1.2],
+            top=0.93, bottom=0.06, left=0.03, right=0.97,
+        )
+        ax_main = fig.add_subplot(gs[0])
+        ax_vol  = fig.add_subplot(gs[1], sharex=ax_main)
+        ax_rsi  = fig.add_subplot(gs[2], sharex=ax_main)
+
+        for ax in [ax_main, ax_vol, ax_rsi]:
+            ax.set_facecolor(PANEL_BG)
+            ax.tick_params(colors=TEXT_COLOR, labelsize=7.5)
+            for sp in ax.spines.values():
+                sp.set_color(GRID_COLOR)
+        ax_main.grid(True, color=GRID_COLOR, linewidth=0.4, alpha=0.6)
+        ax_vol.grid(True, color=GRID_COLOR, linewidth=0.3, alpha=0.4)
+        ax_rsi.grid(True, color=GRID_COLOR, linewidth=0.3, alpha=0.4)
+
+        # ──────────────────────────────────────────────────────────
+        # 1. ORDER BLOCKS
+        # ──────────────────────────────────────────────────────────
+        if smc:
+            ob_data = smc.get('order_blocks', {})
+
+            # Bullish OB (support dari institusi)
+            for ob in ob_data.get('near_bull', [])[:4]:
+                ob_lo = ob.get('low', 0)
+                ob_hi = ob.get('high', 0)
+                if ob_lo <= 0 or ob_hi <= 0:
+                    continue
+                fresh    = ob.get('fresh', True)
+                alpha_bg = 0.22 if fresh else 0.10
+                alpha_bd = 0.8  if fresh else 0.4
+                rect = mpatches.Rectangle(
+                    (0, ob_lo), n, ob_hi - ob_lo,
+                    facecolor=OB_BULL_CLR, edgecolor=GREEN,
+                    linewidth=0.8, alpha=alpha_bg, zorder=2,
+                )
+                ax_main.add_patch(rect)
+                ax_main.axhline(ob_hi, color=GREEN, linewidth=0.6,
+                                linestyle='--', alpha=alpha_bd * 0.7, zorder=2)
+                label_txt = 'OB↑' + (' ✓' if fresh else ' ~')
+                ax_main.text(n * 0.98, ob_hi, label_txt,
+                             color=GREEN, fontsize=7, ha='right', va='bottom',
+                             fontweight='bold', alpha=alpha_bd, zorder=6)
+
+            # Bearish OB (resistance dari institusi)
+            for ob in ob_data.get('near_bear', [])[:4]:
+                ob_lo = ob.get('low', 0)
+                ob_hi = ob.get('high', 0)
+                if ob_lo <= 0 or ob_hi <= 0:
+                    continue
+                fresh    = ob.get('fresh', True)
+                alpha_bg = 0.22 if fresh else 0.10
+                alpha_bd = 0.8  if fresh else 0.4
+                rect = mpatches.Rectangle(
+                    (0, ob_lo), n, ob_hi - ob_lo,
+                    facecolor=OB_BEAR_CLR, edgecolor=RED,
+                    linewidth=0.8, alpha=alpha_bg, zorder=2,
+                )
+                ax_main.add_patch(rect)
+                ax_main.axhline(ob_lo, color=RED, linewidth=0.6,
+                                linestyle='--', alpha=alpha_bd * 0.7, zorder=2)
+                label_txt = 'OB↓' + (' ✓' if fresh else ' ~')
+                ax_main.text(n * 0.98, ob_lo, label_txt,
+                             color=RED, fontsize=7, ha='right', va='top',
+                             fontweight='bold', alpha=alpha_bd, zorder=6)
+
+        # ──────────────────────────────────────────────────────────
+        # 2. FVG / IMBALANCE ZONES
+        # ──────────────────────────────────────────────────────────
+        if smc:
+            fvg_data = smc.get('fvg', {})
+
+            for fvg in fvg_data.get('bull_fvg', [])[:3]:
+                flo = fvg.get('low', 0);  fhi = fvg.get('high', 0)
+                if flo <= 0 or fhi <= 0: continue
+                rect = mpatches.Rectangle(
+                    (0, flo), n, fhi - flo,
+                    facecolor=FVG_BULL_CLR, edgecolor='none', alpha=0.20, zorder=1)
+                ax_main.add_patch(rect)
+                ax_main.text(n * 0.01, (flo + fhi) / 2, 'FVG↑',
+                             color='#80CBC4', fontsize=6.5, va='center', alpha=0.9)
+
+            for fvg in fvg_data.get('bear_fvg', [])[:3]:
+                flo = fvg.get('low', 0);  fhi = fvg.get('high', 0)
+                if flo <= 0 or fhi <= 0: continue
+                rect = mpatches.Rectangle(
+                    (0, flo), n, fhi - flo,
+                    facecolor=FVG_BEAR_CLR, edgecolor='none', alpha=0.20, zorder=1)
+                ax_main.add_patch(rect)
+                ax_main.text(n * 0.01, (flo + fhi) / 2, 'FVG↓',
+                             color='#F48FB1', fontsize=6.5, va='center', alpha=0.9)
+
+        # ──────────────────────────────────────────────────────────
+        # 3. S&R ZONES UTAMA
+        # ──────────────────────────────────────────────────────────
+        if support and isinstance(support, dict):
+            sup_lo = support.get('low',  support.get('mid', 0)) * 0.9995
+            sup_hi = support.get('high', support.get('mid', 0)) * 1.0005
+            if sup_lo > 0:
+                ax_main.axhspan(sup_lo, sup_hi, facecolor=GREEN, alpha=0.12, zorder=1)
+                ax_main.axhline(sup_hi, color=GREEN, linewidth=1.0,
+                                linestyle='-', alpha=0.5, zorder=3)
+                score = support.get('score', 0)
+                ax_main.text(n * 0.01, sup_hi,
+                             f"Support {_fmt(sup_hi)} (score:{score})",
+                             color=GREEN, fontsize=7, va='bottom', alpha=0.9)
+
+        if resistance and isinstance(resistance, dict):
+            res_lo = resistance.get('low',  resistance.get('mid', 0)) * 0.9995
+            res_hi = resistance.get('high', resistance.get('mid', 0)) * 1.0005
+            if res_lo > 0:
+                ax_main.axhspan(res_lo, res_hi, facecolor=RED, alpha=0.12, zorder=1)
+                ax_main.axhline(res_lo, color=RED, linewidth=1.0,
+                                linestyle='-', alpha=0.5, zorder=3)
+                score = resistance.get('score', 0)
+                ax_main.text(n * 0.01, res_lo,
+                             f"Resistance {_fmt(res_lo)} (score:{score})",
+                             color=RED, fontsize=7, va='top', alpha=0.9)
+
+        # ──────────────────────────────────────────────────────────
+        # 4. LIQUIDITY POOLS (Equal Highs / Equal Lows)
+        # ──────────────────────────────────────────────────────────
+        if smc:
+            liq_data = smc.get('liquidity', {})
+            # EQH — buy-side liquidity di atas (stop loss dari short positions)
+            for eqh in liq_data.get('eqh', [])[:2]:
+                px = eqh.get('price', 0)
+                if px <= 0: continue
+                ax_main.axhline(px, color=LIQ_CLR, linewidth=0.7,
+                                linestyle=':', alpha=0.65, zorder=3)
+                ax_main.text(n - 1, px, f" EQH {_fmt(px)} 💧",
+                             color=LIQ_CLR, fontsize=6.5, va='center', ha='right',
+                             alpha=0.85)
+            # EQL — sell-side liquidity di bawah
+            for eql in liq_data.get('eql', [])[:2]:
+                px = eql.get('price', 0)
+                if px <= 0: continue
+                ax_main.axhline(px, color=LIQ_CLR, linewidth=0.7,
+                                linestyle=':', alpha=0.65, zorder=3)
+                ax_main.text(n - 1, px, f" EQL {_fmt(px)} 💧",
+                             color=LIQ_CLR, fontsize=6.5, va='center', ha='right',
+                             alpha=0.85)
+
+        # ──────────────────────────────────────────────────────────
+        # 5. TRENDLINES (dari swing high/low)
+        # ──────────────────────────────────────────────────────────
+        if smc:
+            bos_data = smc.get('bos_choch', {})
+            swing_highs = bos_data.get('swing_highs', [])
+            swing_lows  = bos_data.get('swing_lows',  [])
+
+            # Konversi indeks absolut → relatif dalam window plot
+            def _to_rel(idx_abs):
+                return idx_abs - offset
+
+            # Trendline bawah (dari 2 swing low terakhir dalam window)
+            vis_lows = [(p['price'], _to_rel(p['idx']))
+                        for p in swing_lows
+                        if 2 <= _to_rel(p['idx']) <= n - 2]
+            if len(vis_lows) >= 2:
+                # Ambil 2 swing low terbaru
+                vis_lows_s = sorted(vis_lows, key=lambda x: x[1])
+                p1, p2 = vis_lows_s[-2], vis_lows_s[-1]
+                if p2[1] != p1[1]:
+                    slope = (p2[0] - p1[0]) / (p2[1] - p1[1])
+                    # Extend ke kiri dan kanan
+                    x0 = max(0, p1[1] - 10)
+                    x1 = min(n - 1, p2[1] + 15)
+                    y0 = p1[0] + slope * (x0 - p1[1])
+                    y1 = p1[0] + slope * (x1 - p1[1])
+                    ax_main.plot([x0, x1], [y0, y1],
+                                 color=TRENDLINE_UP, linewidth=1.2,
+                                 linestyle='-', alpha=0.75, zorder=4)
+                    ax_main.scatter([p1[1], p2[1]], [p1[0], p2[0]],
+                                    color=TRENDLINE_UP, s=20, zorder=5, alpha=0.8)
+
+            # Trendline atas (dari 2 swing high terakhir)
+            vis_highs = [(p['price'], _to_rel(p['idx']))
+                         for p in swing_highs
+                         if 2 <= _to_rel(p['idx']) <= n - 2]
+            if len(vis_highs) >= 2:
+                vis_highs_s = sorted(vis_highs, key=lambda x: x[1])
+                p1, p2 = vis_highs_s[-2], vis_highs_s[-1]
+                if p2[1] != p1[1]:
+                    slope = (p2[0] - p1[0]) / (p2[1] - p1[1])
+                    x0 = max(0, p1[1] - 10)
+                    x1 = min(n - 1, p2[1] + 15)
+                    y0 = p1[0] + slope * (x0 - p1[1])
+                    y1 = p1[0] + slope * (x1 - p1[1])
+                    ax_main.plot([x0, x1], [y0, y1],
+                                 color=TRENDLINE_DOWN, linewidth=1.2,
+                                 linestyle='-', alpha=0.75, zorder=4)
+                    ax_main.scatter([p1[1], p2[1]], [p1[0], p2[0]],
+                                    color=TRENDLINE_DOWN, s=20, zorder=5, alpha=0.8)
+
+        # ──────────────────────────────────────────────────────────
+        # 6. BOS / CHoCH MARKERS
+        # ──────────────────────────────────────────────────────────
+        if smc:
+            bos_data  = smc.get('bos_choch', {})
+            bos_type  = bos_data.get('bos')
+            choch_type = bos_data.get('choch')
+
+            bos_idx  = bos_data.get('last_bos_idx',  -1)
+            choch_idx = bos_data.get('last_choch_idx', -1)
+
+            if bos_idx >= 0:
+                rel_idx = bos_idx - offset
+                if 0 <= rel_idx < n:
+                    clr = GREEN if bos_type == 'BULLISH' else RED
+                    ax_main.axvline(rel_idx, color=BOS_CLR, linewidth=0.8,
+                                    linestyle='--', alpha=0.5, zorder=3)
+                    ax_main.text(rel_idx, highs.max() * 1.0005, 'BOS',
+                                 color=BOS_CLR, fontsize=7, ha='center',
+                                 fontweight='bold', va='bottom', zorder=6)
+
+            if choch_idx >= 0:
+                rel_idx = choch_idx - offset
+                if 0 <= rel_idx < n:
+                    ax_main.axvline(rel_idx, color=CHOCH_CLR, linewidth=0.8,
+                                    linestyle='--', alpha=0.5, zorder=3)
+                    ax_main.text(rel_idx, lows.min() * 0.9995, 'CHoCH',
+                                 color=CHOCH_CLR, fontsize=7, ha='center',
+                                 fontweight='bold', va='top', zorder=6)
+
+        # ──────────────────────────────────────────────────────────
+        # 7. CANDLESTICK
+        # ──────────────────────────────────────────────────────────
+        for i in xs:
+            o, h, l, c = opens[i], highs[i], lows[i], closes[i]
+            color = BULL_BODY if c >= o else BEAR_BODY
+            ax_main.plot([i, i], [l, h], color=color, linewidth=0.8, zorder=5)
+            body_h = abs(c - o)
+            body_y = min(c, o)
+            rect = mpatches.FancyBboxPatch(
+                (i - 0.35, body_y), 0.7, max(body_h, highs.max() * 0.0001),
+                boxstyle="square,pad=0",
+                facecolor=color, edgecolor=color, linewidth=0, zorder=6,
+            )
+            ax_main.add_patch(rect)
+
+        # ──────────────────────────────────────────────────────────
+        # 8. EMA LINES
+        # ──────────────────────────────────────────────────────────
+        ax_main.plot(xs, e8,  color=EMA8_CLR,  linewidth=1.4, label='EMA 8',  zorder=7)
+        ax_main.plot(xs, e21, color=EMA21_CLR, linewidth=1.4, label='EMA 21', zorder=7)
+        ax_main.plot(xs, e50, color=EMA50_CLR, linewidth=1.0, label='EMA 50', zorder=7,
+                     linestyle='--', alpha=0.75)
+
+        # ──────────────────────────────────────────────────────────
+        # 9. ENTRY / SL / TP
+        # ──────────────────────────────────────────────────────────
+        if signal:
+            entry = signal.get('entry', 0)
+            sl    = signal.get('sl', 0)
+            tp1   = signal.get('tp1', 0)
+            tp2   = signal.get('tp2', 0)
+            direction = signal.get('direction', '')
+
+            if entry > 0:
+                ax_main.axhline(entry, color=ENTRY_CLR, linewidth=1.8,
+                                linestyle='-', zorder=8)
+                ax_main.text(n - 1, entry, f" Entry {_fmt(entry)}",
+                             color=ENTRY_CLR, fontsize=8, va='bottom',
+                             fontweight='bold', ha='right', zorder=9)
+
+            if sl > 0:
+                ax_main.axhline(sl, color=SL_CLR, linewidth=1.3,
+                                linestyle='--', zorder=8)
+                ax_main.text(n - 1, sl, f" SL {_fmt(sl)}",
+                             color=SL_CLR, fontsize=8, va='top',
+                             ha='right', zorder=9)
+
+            if tp1 > 0:
+                ax_main.axhline(tp1, color=TP1_CLR, linewidth=1.3,
+                                linestyle='--', zorder=8)
+                ax_main.text(n - 1, tp1, f" TP1 {_fmt(tp1)}",
+                             color=TP1_CLR, fontsize=8, va='bottom',
+                             ha='right', zorder=9)
+
+            if tp2 > 0:
+                ax_main.axhline(tp2, color=TP2_CLR, linewidth=1.1,
+                                linestyle=':', zorder=8)
+                ax_main.text(n - 1, tp2, f" TP2 {_fmt(tp2)}",
+                             color=TP2_CLR, fontsize=8, va='bottom',
+                             ha='right', zorder=9)
+
+            # Shade R:R area
+            if entry > 0 and sl > 0 and tp2 > 0:
+                if direction == 'LONG':
+                    ax_main.axhspan(sl, entry, facecolor=SL_CLR, alpha=0.07, zorder=1)
+                    ax_main.axhspan(entry, tp2, facecolor=TP1_CLR, alpha=0.05, zorder=1)
+                else:
+                    ax_main.axhspan(entry, sl, facecolor=SL_CLR, alpha=0.07, zorder=1)
+                    ax_main.axhspan(tp2, entry, facecolor=TP1_CLR, alpha=0.05, zorder=1)
+
+            # Arrow LONG/SHORT di candle terakhir
+            arrow_dy = price_range * 0.07
+            arrow_clr = GREEN if direction == 'LONG' else RED
+            arrow_lbl = '▲ LONG' if direction == 'LONG' else '▼ SHORT'
+            ax_main.annotate(
+                arrow_lbl,
+                xy=(n - 1, curr_price),
+                xytext=(n - 1, curr_price + (arrow_dy if direction == 'LONG' else -arrow_dy)),
+                fontsize=11, fontweight='bold', color=arrow_clr, zorder=10,
+                ha='center',
+                arrowprops=dict(arrowstyle='->', color=arrow_clr, lw=2),
+            )
+
+        # ──────────────────────────────────────────────────────────
+        # 10. VOLUME
+        # ──────────────────────────────────────────────────────────
+        vol_mean = np.mean(vols)
+        for i in xs:
+            color = GREEN if closes[i] >= opens[i] else RED
+            # Spike volume → lebih terang
+            alpha = 1.0 if vols[i] > vol_mean * 1.5 else 0.65
+            ax_vol.bar(i, vols[i], color=color, alpha=alpha, width=0.8)
+        # Garis rata-rata volume
+        ax_vol.axhline(vol_mean, color=DIM_TEXT, linewidth=0.6,
+                       linestyle='--', alpha=0.5)
+        ax_vol.set_ylabel('Vol', color=DIM_TEXT, fontsize=7.5)
+        plt.setp(ax_vol.get_xticklabels(), visible=False)
+        ax_vol.yaxis.set_label_position('right')
+        ax_vol.yaxis.tick_right()
+
+        # ──────────────────────────────────────────────────────────
+        # 11. RSI PANEL
+        # ──────────────────────────────────────────────────────────
+        ax_rsi.plot(xs, rsi, color='#CE93D8', linewidth=1.2, zorder=4)
+        ax_rsi.axhline(70, color=RED,   linewidth=0.7, linestyle='--', alpha=0.6)
+        ax_rsi.axhline(50, color=DIM_TEXT, linewidth=0.5, linestyle=':',  alpha=0.5)
+        ax_rsi.axhline(30, color=GREEN, linewidth=0.7, linestyle='--', alpha=0.6)
+        ax_rsi.fill_between(xs, rsi, 70, where=(rsi >= 70),
+                            facecolor=RED,   alpha=0.15, zorder=1)
+        ax_rsi.fill_between(xs, rsi, 30, where=(rsi <= 30),
+                            facecolor=GREEN, alpha=0.15, zorder=1)
+        ax_rsi.set_ylim(0, 100)
+        ax_rsi.set_yticks([30, 50, 70])
+        ax_rsi.set_ylabel('RSI 14', color=DIM_TEXT, fontsize=7.5)
+        ax_rsi.yaxis.set_label_position('right')
+        ax_rsi.yaxis.tick_right()
+        ax_rsi.tick_params(axis='y', labelsize=7, colors=DIM_TEXT)
+        # RSI value terkini
+        rsi_now = rsi[-1]
+        rsi_clr = RED if rsi_now >= 70 else (GREEN if rsi_now <= 30 else TEXT_COLOR)
+        ax_rsi.text(n - 1, rsi_now, f" {rsi_now:.1f}",
+                    color=rsi_clr, fontsize=8, va='center', fontweight='bold')
+
+        # ──────────────────────────────────────────────────────────
+        # 12. X AXIS — timestamp
+        # ──────────────────────────────────────────────────────────
+        if 'timestamp' in plot_df.columns:
+            tick_step = max(1, n // 9)
+            tick_pos  = list(range(0, n, tick_step))
+            tick_lbl  = []
+            for tp in tick_pos:
+                ts = plot_df['timestamp'].iloc[tp]
+                lbl = ts.strftime('%m/%d %H:%M') if hasattr(ts, 'strftime') else str(tp)
+                tick_lbl.append(lbl)
+            ax_rsi.set_xticks(tick_pos)
+            ax_rsi.set_xticklabels(tick_lbl, rotation=30, ha='right',
+                                   fontsize=6.5, color=DIM_TEXT)
+
+        # Y axis harga (kanan)
+        ax_main.yaxis.set_label_position('right')
+        ax_main.yaxis.tick_right()
+        ax_main.tick_params(axis='y', labelsize=7.5)
+        plt.setp(ax_main.get_xticklabels(), visible=False)
+
+        # ──────────────────────────────────────────────────────────
+        # 13. TITLE
+        # ──────────────────────────────────────────────────────────
+        quality   = signal.get('quality', '')     if signal else ''
+        direction = signal.get('direction', '')   if signal else ''
+        score     = signal.get('confluence_score', 0) if signal else 0
+        kills     = signal.get('kill_count', 0)   if signal else 0
+        rr        = signal.get('rr2', signal.get('rr', 0)) if signal else 0
+
+        ico_dir = '▲ LONG' if direction == 'LONG' else ('▼ SHORT' if direction == 'SHORT' else '')
+        struct_label = {
+            'UPTREND':   'HH/HL ↗ Uptrend',
+            'DOWNTREND': 'LH/LL ↘ Downtrend',
+            'SIDEWAYS':  'Sideways →',
+        }.get(structure, structure)
+        struct_clr = GREEN if structure == 'UPTREND' else (
+                     RED   if structure == 'DOWNTREND' else DIM_TEXT)
+
+        cross_txt = ''
+        if ema_cross and ema_cross.get('cross') == 'GOLDEN':
+            cross_txt = '  ★ Golden Cross'
+        elif ema_cross and ema_cross.get('cross') == 'DEATH':
+            cross_txt = '  ✕ Death Cross'
+
+        qual_clr = {'IDEAL': '#FFD700', 'GOOD': GREEN,
+                    'MODERATE': '#FF9800', 'WAIT': DIM_TEXT}.get(quality, TEXT_COLOR)
+
+        # Phase & SMC info
+        phase_txt = ''
+        smc_bias  = ''
+        smc_conf  = 0
+        pd_zone   = ''
+        if smc:
+            phase   = smc.get('phase', {})
+            phase_txt = phase.get('phase', '')
+            smc_bias  = smc.get('smart_bias', '')
+            smc_conf  = smc.get('confidence', 0)
+            pd_zone   = smc.get('pd_zone', {}).get('zone', '')
+
+        title_main = (
+            f"{symbol}/USDT  {tf.upper()}  │  "
+            f"{ico_dir}  [{quality}]"
+            f"{f'  │  Score:{score}  Kills:{kills}' if score else ''}"
+            f"{f'  │  RR 1:{rr:.1f}' if rr > 0 else ''}"
+            f"{cross_txt}"
+        )
+        fig.suptitle(title_main, color=TEXT_COLOR, fontsize=12,
+                     fontweight='bold', x=0.03, ha='left', y=0.975)
+
+        # Sub-info kanan atas
+        sub_parts = []
+        if struct_label:
+            sub_parts.append(struct_label)
+        if phase_txt:
+            sub_parts.append(f"Phase: {phase_txt}")
+        if pd_zone:
+            sub_parts.append(f"Zone: {pd_zone.replace('_',' ')}")
+        if smc_bias:
+            sub_parts.append(f"SMC: {smc_bias} ({smc_conf}%)")
+        sub_txt = '  │  '.join(sub_parts)
+        if sub_txt:
+            fig.text(0.97, 0.975, sub_txt,
+                     color=struct_clr, fontsize=8, ha='right', va='top',
+                     fontweight='bold')
+
+        # ──────────────────────────────────────────────────────────
+        # 14. LEGEND
+        # ──────────────────────────────────────────────────────────
+        legend_elements = [
+            Line2D([0],[0], color=EMA8_CLR,  linewidth=1.5, label='EMA 8'),
+            Line2D([0],[0], color=EMA21_CLR, linewidth=1.5, label='EMA 21'),
+            Line2D([0],[0], color=EMA50_CLR, linewidth=1.0, label='EMA 50',  linestyle='--'),
+        ]
+        if signal and signal.get('entry', 0) > 0:
+            legend_elements += [
+                Line2D([0],[0], color=ENTRY_CLR, linewidth=1.5, label='Entry'),
+                Line2D([0],[0], color=SL_CLR,    linewidth=1.2, label='SL',   linestyle='--'),
+                Line2D([0],[0], color=TP1_CLR,   linewidth=1.2, label='TP1',  linestyle='--'),
+                Line2D([0],[0], color=TP2_CLR,   linewidth=1.0, label='TP2',  linestyle=':'),
+            ]
+        if smc and smc.get('order_blocks', {}).get('near_bull') or \
+           smc and smc.get('order_blocks', {}).get('near_bear'):
+            legend_elements += [
+                mpatches.Patch(facecolor=OB_BULL_CLR, edgecolor=GREEN,
+                               alpha=0.6, label='OB Bullish'),
+                mpatches.Patch(facecolor=OB_BEAR_CLR, edgecolor=RED,
+                               alpha=0.6, label='OB Bearish'),
+            ]
+        if smc and (smc.get('fvg', {}).get('bull_fvg') or
+                    smc.get('fvg', {}).get('bear_fvg')):
+            legend_elements += [
+                mpatches.Patch(facecolor=FVG_BULL_CLR, alpha=0.5, label='FVG↑'),
+                mpatches.Patch(facecolor=FVG_BEAR_CLR, alpha=0.5, label='FVG↓'),
+            ]
+
+        ax_main.legend(
+            handles=legend_elements,
+            loc='upper left',
+            facecolor=PANEL_BG, edgecolor=GRID_COLOR,
+            labelcolor=TEXT_COLOR, fontsize=7, framealpha=0.85,
+            ncol=min(len(legend_elements), 8),
+        )
+
+        # ──────────────────────────────────────────────────────────
+        # 15. SIGNAL REASONS (annotasi kiri bawah chart)
+        # ──────────────────────────────────────────────────────────
+        if signal:
+            reasons = signal.get('reasons', [])[:5]
+            if reasons:
+                reasons_txt = '\n'.join(f"• {r}" for r in reasons)
+                ax_main.text(
+                    0.01, 0.02, reasons_txt,
+                    transform=ax_main.transAxes,
+                    color=DIM_TEXT, fontsize=6.5,
+                    va='bottom', ha='left',
+                    bbox=dict(boxstyle='round,pad=0.4', facecolor=DARK_BG,
+                              edgecolor=GRID_COLOR, alpha=0.75),
+                    zorder=10,
+                )
+
+        # Watermark
+        ax_main.text(0.5, 0.5, 'CryptoVisionID',
+                     transform=ax_main.transAxes,
+                     fontsize=30, color='white', alpha=0.03,
+                     ha='center', va='center', rotation=30, fontweight='bold')
+
+        # ──────────────────────────────────────────────────────────
+        # Save
+        # ──────────────────────────────────────────────────────────
+        if save_path is None:
+            os.makedirs('tmp', exist_ok=True)
+            save_path = f"tmp/chart_{symbol}_{tf}_{int(datetime.now().timestamp())}.png"
+
+        fig.savefig(save_path, dpi=130, bbox_inches='tight',
+                    facecolor=DARK_BG, edgecolor='none')
+        plt.close(fig)
+        return save_path
+
+    except Exception as e:
+        logger.error(f"chart_generator {symbol}: {e}", exc_info=True)
+        plt.close('all')
+        return None
+
+
+def cleanup_chart(path: str):
+    try:
+        if path and os.path.exists(path):
+            os.remove(path)
+    except Exception:
+        pass

@@ -1,0 +1,1170 @@
+{
+  "ADA": {
+    "symbol": "ADA",
+    "updated_at": "2026-03-23T14:30:24.023463",
+    "n_trades": 188,
+    "overall_wr": 30.3,
+    "overall_ev": -0.072,
+    "tradeable": "BORDERLINE",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 32.8,
+      "trend_pct": 100.0,
+      "atr_val": 0.003276
+    },
+    "volatility": {
+      "vol_pct": 0.328,
+      "atr": 0.003276,
+      "price": 0.2712,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.772,
+      "category": "HIGH"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 34.7,
+      "avg_bars_to_sl": 8.3,
+      "n_sl": 98
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 21,
+      "sweetspot_max": 26,
+      "best_ev": 0.515,
+      "n_trades": 188
+    },
+    "best_direction": "SHORT_PREFERRED",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "SHORT_PREFERRED",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "APT": {
+    "symbol": "APT",
+    "updated_at": "2026-03-23T14:30:24.033246",
+    "n_trades": 724,
+    "overall_wr": 25.4,
+    "overall_ev": -0.229,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 38.1,
+      "trend_pct": 91.7,
+      "atr_val": 0.011828
+    },
+    "volatility": {
+      "vol_pct": 1.183,
+      "atr": 0.011828,
+      "price": 0.946,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.603,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 29.0,
+      "avg_bars_to_sl": 10.5,
+      "n_sl": 331
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 30,
+      "sweetspot_max": 35,
+      "best_ev": 2.0,
+      "n_trades": 724
+    },
+    "best_direction": "SHORT_PREFERRED",
+    "best_tf": "15m",
+    "config_overrides": {
+      "sl_atr_buffer": 1.4,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "SHORT_PREFERRED",
+      "preferred_tf": "15m",
+      "adx_ranging_block": 18
+    }
+  },
+  "ARB": {
+    "symbol": "ARB",
+    "updated_at": "2026-03-23T14:30:24.033246",
+    "n_trades": 208,
+    "overall_wr": 24.0,
+    "overall_ev": -0.272,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 40.1,
+      "trend_pct": 80.6,
+      "atr_val": 0.001148
+    },
+    "volatility": {
+      "vol_pct": 0.115,
+      "atr": 0.001148,
+      "price": 0.1011,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.747,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 32.6,
+      "avg_bars_to_sl": 6.6,
+      "n_sl": 95
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 18,
+      "sweetspot_max": 23,
+      "best_ev": -0.126,
+      "n_trades": 208
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "ATOM": {
+    "symbol": "ATOM",
+    "updated_at": "2026-03-23T14:30:24.039986",
+    "n_trades": 659,
+    "overall_wr": 27.0,
+    "overall_ev": -0.186,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 32.2,
+      "trend_pct": 80.6,
+      "atr_val": 0.015566
+    },
+    "volatility": {
+      "vol_pct": 0.82,
+      "atr": 0.015566,
+      "price": 1.898,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.469,
+      "category": "LOW"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 30.5,
+      "avg_bars_to_sl": 8.3,
+      "n_sl": 325
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 9,
+      "sweetspot_max": 14,
+      "best_ev": -0.041,
+      "n_trades": 659
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 12,
+      "score_good": 9,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "AVAX": {
+    "symbol": "AVAX",
+    "updated_at": "2026-03-23T14:30:24.039986",
+    "n_trades": 209,
+    "overall_wr": 24.4,
+    "overall_ev": -0.256,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 32.5,
+      "trend_pct": 65.3,
+      "atr_val": 0.103838
+    },
+    "volatility": {
+      "vol_pct": 1.085,
+      "atr": 0.103838,
+      "price": 9.57,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.826,
+      "category": "HIGH"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 39.6,
+      "avg_bars_to_sl": 8.0,
+      "n_sl": 106
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 24,
+      "sweetspot_max": 29,
+      "best_ev": 0.149,
+      "n_trades": 209
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 1.4,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "BNB": {
+    "symbol": "BNB",
+    "updated_at": "2026-03-23T14:30:24.050422",
+    "n_trades": 513,
+    "overall_wr": 26.1,
+    "overall_ev": -0.203,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 29.3,
+      "trend_pct": 65.3,
+      "atr_val": 4.343333
+    },
+    "volatility": {
+      "vol_pct": 0.67,
+      "atr": 4.343333,
+      "price": 648.13,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.88,
+      "category": "HIGH"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 29.4,
+      "avg_bars_to_sl": 9.2,
+      "n_sl": 265
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 9,
+      "sweetspot_max": 14,
+      "best_ev": 0.304,
+      "n_trades": 513
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 12,
+      "score_good": 9,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "BTC": {
+    "symbol": "BTC",
+    "updated_at": "2026-03-23T14:30:24.056189",
+    "n_trades": 1332,
+    "overall_wr": 32.1,
+    "overall_ev": -0.022,
+    "tradeable": "BORDERLINE",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 34.8,
+      "trend_pct": 79.2,
+      "atr_val": 516.910505
+    },
+    "volatility": {
+      "vol_pct": 0.726,
+      "atr": 516.910505,
+      "price": 71193.23,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 1.0,
+      "category": "HIGH"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 37.4,
+      "avg_bars_to_sl": 8.0,
+      "n_sl": 580
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 12,
+      "sweetspot_max": 17,
+      "best_ev": 0.222,
+      "n_trades": 1332
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "DOGE": {
+    "symbol": "DOGE",
+    "updated_at": "2026-03-23T14:30:24.062213",
+    "n_trades": 1026,
+    "overall_wr": 27.5,
+    "overall_ev": -0.162,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 36.0,
+      "trend_pct": 90.3,
+      "atr_val": 0.001161
+    },
+    "volatility": {
+      "vol_pct": 0.116,
+      "atr": 0.001161,
+      "price": 0.0945,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.678,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 31.7,
+      "avg_bars_to_sl": 10.1,
+      "n_sl": 479
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 24,
+      "sweetspot_max": 29,
+      "best_ev": 0.323,
+      "n_trades": 1026
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "DOT": {
+    "symbol": "DOT",
+    "updated_at": "2026-03-23T14:30:24.066233",
+    "n_trades": 497,
+    "overall_wr": 27.2,
+    "overall_ev": -0.169,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 38.8,
+      "trend_pct": 100.0,
+      "atr_val": 0.019253
+    },
+    "volatility": {
+      "vol_pct": 1.24,
+      "atr": 0.019253,
+      "price": 1.552,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.575,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 33.6,
+      "avg_bars_to_sl": 7.4,
+      "n_sl": 226
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 27,
+      "sweetspot_max": 32,
+      "best_ev": 0.369,
+      "n_trades": 497
+    },
+    "best_direction": "BOTH",
+    "best_tf": "15m",
+    "config_overrides": {
+      "sl_atr_buffer": 1.4,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "15m",
+      "adx_ranging_block": 18
+    }
+  },
+  "ETH": {
+    "symbol": "ETH",
+    "updated_at": "2026-03-23T14:30:24.072286",
+    "n_trades": 1166,
+    "overall_wr": 40.6,
+    "overall_ev": 0.235,
+    "tradeable": "YES",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 47.1,
+      "trend_pct": 90.3,
+      "atr_val": 22.014848
+    },
+    "volatility": {
+      "vol_pct": 1.005,
+      "atr": 22.014848,
+      "price": 2190.27,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.899,
+      "category": "HIGH"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 31.0,
+      "avg_bars_to_sl": 9.6,
+      "n_sl": 426
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 24,
+      "sweetspot_max": 29,
+      "best_ev": 0.73,
+      "n_trades": 1166
+    },
+    "best_direction": "BOTH",
+    "best_tf": "4h",
+    "config_overrides": {
+      "sl_atr_buffer": 1.4,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "4h",
+      "adx_ranging_block": 18
+    }
+  },
+  "FET": {
+    "symbol": "FET",
+    "updated_at": "2026-03-23T14:30:24.072286",
+    "n_trades": 134,
+    "overall_wr": 18.7,
+    "overall_ev": -0.432,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 46.7,
+      "trend_pct": 100.0,
+      "atr_val": 0.005785
+    },
+    "volatility": {
+      "vol_pct": 0.578,
+      "atr": 0.005785,
+      "price": 0.2193,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.362,
+      "category": "LOW"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 30.9,
+      "avg_bars_to_sl": 10.9,
+      "n_sl": 68
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 12,
+      "sweetspot_max": 17,
+      "best_ev": -0.028,
+      "n_trades": 134
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "INJ": {
+    "symbol": "INJ",
+    "updated_at": "2026-03-23T14:30:24.080320",
+    "n_trades": 235,
+    "overall_wr": 22.6,
+    "overall_ev": -0.312,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 27.5,
+      "trend_pct": 61.1,
+      "atr_val": 0.029141
+    },
+    "volatility": {
+      "vol_pct": 0.956,
+      "atr": 0.029141,
+      "price": 3.049,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.721,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.8,
+      "fast_sl_pct": 40.2,
+      "avg_bars_to_sl": 8.0,
+      "n_sl": 122
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 27,
+      "sweetspot_max": 32,
+      "best_ev": 1.31,
+      "n_trades": 235
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "LINK": {
+    "symbol": "LINK",
+    "updated_at": "2026-03-23T14:30:24.088288",
+    "n_trades": 1189,
+    "overall_wr": 29.0,
+    "overall_ev": -0.116,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 38.5,
+      "trend_pct": 80.6,
+      "atr_val": 0.100909
+    },
+    "volatility": {
+      "vol_pct": 1.097,
+      "atr": 0.100909,
+      "price": 9.2,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.881,
+      "category": "HIGH"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 39.7,
+      "avg_bars_to_sl": 8.3,
+      "n_sl": 509
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 24,
+      "sweetspot_max": 29,
+      "best_ev": 0.384,
+      "n_trades": 1189
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 1.4,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "LTC": {
+    "symbol": "LTC",
+    "updated_at": "2026-03-23T14:30:24.090297",
+    "n_trades": 905,
+    "overall_wr": 28.5,
+    "overall_ev": -0.131,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 39.3,
+      "trend_pct": 91.7,
+      "atr_val": 0.426667
+    },
+    "volatility": {
+      "vol_pct": 0.768,
+      "atr": 0.426667,
+      "price": 55.58,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.806,
+      "category": "HIGH"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 26.4,
+      "avg_bars_to_sl": 9.3,
+      "n_sl": 455
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 9,
+      "sweetspot_max": 14,
+      "best_ev": 0.517,
+      "n_trades": 905
+    },
+    "best_direction": "SHORT_PREFERRED",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 12,
+      "score_good": 9,
+      "score_moderate": 6,
+      "preferred_direction": "SHORT_PREFERRED",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "NEAR": {
+    "symbol": "NEAR",
+    "updated_at": "2026-03-23T14:30:24.096303",
+    "n_trades": 738,
+    "overall_wr": 24.1,
+    "overall_ev": -0.269,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 37.2,
+      "trend_pct": 80.6,
+      "atr_val": 0.017232
+    },
+    "volatility": {
+      "vol_pct": 1.243,
+      "atr": 0.017232,
+      "price": 1.386,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.538,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 29.2,
+      "avg_bars_to_sl": 10.0,
+      "n_sl": 367
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 30,
+      "sweetspot_max": 35,
+      "best_ev": 1.143,
+      "n_trades": 738
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 1.4,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "OP": {
+    "symbol": "OP",
+    "updated_at": "2026-03-23T14:30:24.096303",
+    "n_trades": 121,
+    "overall_wr": 20.7,
+    "overall_ev": -0.372,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 40.0,
+      "trend_pct": 94.4,
+      "atr_val": 0.001437
+    },
+    "volatility": {
+      "vol_pct": 0.144,
+      "atr": 0.001437,
+      "price": 0.1266,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.626,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 30.0,
+      "avg_bars_to_sl": 6.3,
+      "n_sl": 60
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 9,
+      "sweetspot_max": 14,
+      "best_ev": -0.068,
+      "n_trades": 121
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 12,
+      "score_good": 9,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "PENDLE": {
+    "symbol": "PENDLE",
+    "updated_at": "2026-03-23T14:30:24.104431",
+    "n_trades": 1135,
+    "overall_wr": 29.4,
+    "overall_ev": -0.103,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 28.4,
+      "trend_pct": 77.8,
+      "atr_val": 0.013869
+    },
+    "volatility": {
+      "vol_pct": 1.107,
+      "atr": 0.013869,
+      "price": 1.253,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.606,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 32.7,
+      "avg_bars_to_sl": 8.3,
+      "n_sl": 480
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 12,
+      "sweetspot_max": 17,
+      "best_ev": 0.369,
+      "n_trades": 1135
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 1.4,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "PEPE": {
+    "symbol": "PEPE",
+    "updated_at": "2026-03-23T14:30:24.112925",
+    "n_trades": 791,
+    "overall_wr": 23.4,
+    "overall_ev": -0.289,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 34.9,
+      "trend_pct": 73.6,
+      "atr_val": 0.0
+    },
+    "volatility": {
+      "vol_pct": 0.0,
+      "atr": 0.0,
+      "price": 0.0,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.521,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 27.0,
+      "avg_bars_to_sl": 10.2,
+      "n_sl": 370
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 15,
+      "sweetspot_max": 20,
+      "best_ev": -0.157,
+      "n_trades": 791
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "RENDER": {
+    "symbol": "RENDER",
+    "updated_at": "2026-03-23T14:30:24.117296",
+    "n_trades": 541,
+    "overall_wr": 26.8,
+    "overall_ev": -0.182,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "TRENDING",
+      "adx_avg": 23.0,
+      "trend_pct": 51.4,
+      "atr_val": 0.029869
+    },
+    "volatility": {
+      "vol_pct": 1.739,
+      "atr": 0.029869,
+      "price": 1.718,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.537,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 34.2,
+      "avg_bars_to_sl": 7.7,
+      "n_sl": 266
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 27,
+      "sweetspot_max": 32,
+      "best_ev": 0.507,
+      "n_trades": 541
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 1.4,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH"
+    }
+  },
+  "SEI": {
+    "symbol": "SEI",
+    "updated_at": "2026-03-23T14:30:24.124909",
+    "n_trades": 562,
+    "overall_wr": 29.5,
+    "overall_ev": -0.101,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 25.8,
+      "trend_pct": 70.8,
+      "atr_val": 0.000627
+    },
+    "volatility": {
+      "vol_pct": 0.063,
+      "atr": 0.000627,
+      "price": 0.0654,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.568,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 35.7,
+      "avg_bars_to_sl": 7.3,
+      "n_sl": 221
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 9,
+      "sweetspot_max": 14,
+      "best_ev": 0.412,
+      "n_trades": 562
+    },
+    "best_direction": "SHORT_PREFERRED",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 12,
+      "score_good": 9,
+      "score_moderate": 6,
+      "preferred_direction": "SHORT_PREFERRED",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "SOL": {
+    "symbol": "SOL",
+    "updated_at": "2026-03-23T14:30:24.126921",
+    "n_trades": 5,
+    "overall_wr": 40.0,
+    "overall_ev": 0.219,
+    "tradeable": "INSUFFICIENT_DATA",
+    "regime": {
+      "regime": "UNKNOWN",
+      "adx_avg": 20,
+      "trend_pct": 50
+    },
+    "volatility": {
+      "vol_pct": 2.0,
+      "category": "MEDIUM"
+    },
+    "btc_correlation": {
+      "correlation": 0.5,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.0,
+      "fast_sl_pct": 0,
+      "n_sl": 0
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 9,
+      "sweetspot_max": 18,
+      "n_trades": 5
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 1.0,
+      "score_ideal": 12,
+      "score_good": 9,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH"
+    }
+  },
+  "SUI": {
+    "symbol": "SUI",
+    "updated_at": "2026-03-23T14:30:24.130943",
+    "n_trades": 112,
+    "overall_wr": 10.7,
+    "overall_ev": -0.673,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 32.5,
+      "trend_pct": 80.6,
+      "atr_val": 0.01218
+    },
+    "volatility": {
+      "vol_pct": 1.218,
+      "atr": 0.01218,
+      "price": 0.9747,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.741,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.0,
+      "fast_sl_pct": 21.9,
+      "avg_bars_to_sl": 8.8,
+      "n_sl": 64
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 18,
+      "sweetspot_max": 23,
+      "best_ev": -0.415,
+      "n_trades": 112
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 1.0,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "TIA": {
+    "symbol": "TIA",
+    "updated_at": "2026-03-23T14:30:24.138981",
+    "n_trades": 1173,
+    "overall_wr": 34.4,
+    "overall_ev": 0.045,
+    "tradeable": "YES",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 31.9,
+      "trend_pct": 76.4,
+      "atr_val": 0.004436
+    },
+    "volatility": {
+      "vol_pct": 0.444,
+      "atr": 0.004436,
+      "price": 0.3455,
+      "category": "VERY_LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.578,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 36.7,
+      "avg_bars_to_sl": 7.7,
+      "n_sl": 512
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 27,
+      "sweetspot_max": 32,
+      "best_ev": 0.776,
+      "n_trades": 1173
+    },
+    "best_direction": "LONG_PREFERRED",
+    "best_tf": "4h",
+    "config_overrides": {
+      "sl_atr_buffer": 0.8,
+      "score_ideal": 15,
+      "score_good": 12,
+      "score_moderate": 6,
+      "preferred_direction": "LONG_PREFERRED",
+      "preferred_tf": "4h",
+      "adx_ranging_block": 18
+    }
+  },
+  "UNI": {
+    "symbol": "UNI",
+    "updated_at": "2026-03-23T14:30:24.138981",
+    "n_trades": 101,
+    "overall_wr": 19.8,
+    "overall_ev": -0.392,
+    "tradeable": "NO",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 37.3,
+      "trend_pct": 100.0,
+      "atr_val": 0.042232
+    },
+    "volatility": {
+      "vol_pct": 1.147,
+      "atr": 0.042232,
+      "price": 3.682,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.741,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 34.0,
+      "avg_bars_to_sl": 9.1,
+      "n_sl": 53
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 9,
+      "sweetspot_max": 14,
+      "best_ev": 0.059,
+      "n_trades": 101
+    },
+    "best_direction": "BOTH",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 1.4,
+      "score_ideal": 12,
+      "score_good": 9,
+      "score_moderate": 6,
+      "preferred_direction": "BOTH",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  },
+  "XRP": {
+    "symbol": "XRP",
+    "updated_at": "2026-03-23T14:30:24.145291",
+    "n_trades": 1342,
+    "overall_wr": 32.0,
+    "overall_ev": -0.024,
+    "tradeable": "BORDERLINE",
+    "regime": {
+      "regime": "STRONG_TRENDING",
+      "adx_avg": 50.3,
+      "trend_pct": 100.0,
+      "atr_val": 0.014932
+    },
+    "volatility": {
+      "vol_pct": 1.033,
+      "atr": 0.014932,
+      "price": 1.446,
+      "category": "LOW"
+    },
+    "btc_correlation": {
+      "correlation": 0.707,
+      "category": "MEDIUM"
+    },
+    "sl_analysis": {
+      "sl_buffer_suggested": 1.4,
+      "fast_sl_pct": 26.1,
+      "avg_bars_to_sl": 10.5,
+      "n_sl": 560
+    },
+    "score_sweetspot": {
+      "sweetspot_min": 6,
+      "sweetspot_max": 11,
+      "best_ev": 2.0,
+      "n_trades": 1342
+    },
+    "best_direction": "SHORT_PREFERRED",
+    "best_tf": "BOTH",
+    "config_overrides": {
+      "sl_atr_buffer": 1.4,
+      "score_ideal": 9,
+      "score_good": 6,
+      "score_moderate": 3,
+      "preferred_direction": "SHORT_PREFERRED",
+      "preferred_tf": "BOTH",
+      "adx_ranging_block": 18
+    }
+  }
+}
