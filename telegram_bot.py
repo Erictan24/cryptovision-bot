@@ -2270,7 +2270,17 @@ class TelegramBot:
     def _run_polling(self):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(self.app.run_polling())
+        async def _start():
+            await self.app.initialize()
+            await self.app.start()
+            await self.app.updater.start_polling(drop_pending_updates=True)
+            # Keep running
+            while True:
+                await asyncio.sleep(3600)
+        try:
+            loop.run_until_complete(_start())
+        except Exception as e:
+            logger.error(f"Polling error: {e}")
 
     def stop_bot(self):
         logger.info("Telegram bot stopped!")
