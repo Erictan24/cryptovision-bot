@@ -3438,8 +3438,10 @@ class TradingEngine:
         if _EXTRA_SIGNALS:
             try:
                 clean_sig = generate_clean_signal(df_m, df_h, df_l, price, atr, symbol)
+                # Log ke debug saja — clean_signal TIDAK dipakai (disabled di baris 3470),
+                # sebelumnya info log bikin user kira signal CLEAN GOOD dieksekusi.
                 if clean_sig:
-                    logger.info(f"⭐ {symbol} CLEAN {clean_sig['direction']} {clean_sig['quality']}")
+                    logger.debug(f"clean_signal {symbol} {clean_sig['direction']} {clean_sig['quality']} (tidak dipakai)")
             except Exception as _ce:
                 logger.debug(f"clean_signal error: {_ce}")
 
@@ -3804,6 +3806,26 @@ class TradingEngine:
                 )
             except Exception as _le:
                 logger.debug(f"limit_signal error {symbol}: {_le}")
+
+        # ── DIAGNOSTIC LOG: tampilkan hasil analisa final per coin ──
+        # Tujuan: visibility filter mana yang paling sering block signal.
+        # Format: SYM tf | q=QUALITY s=SCORE d=DIR k=KILLS sess=SESSION adx=ADX
+        try:
+            if entry:
+                _q = entry.get('quality', '?')
+                _s = entry.get('confluence_score', 0)
+                _d = entry.get('direction', '?')
+                _k = entry.get('kill_count', 0)
+                _sess = entry.get('session', '?')
+                logger.info(
+                    f"📊 {symbol} {tf} | q={_q} s={_s} d={_d} k={_k} sess={_sess} adx={round(adx,1)}"
+                )
+            else:
+                logger.info(
+                    f"📊 {symbol} {tf} | q=None (tidak ada signal) adx={round(adx,1)} ema={et} htf={eth}"
+                )
+        except Exception:
+            pass
 
         return {
             'symbol': symbol, 'exchange': 'Binance',
