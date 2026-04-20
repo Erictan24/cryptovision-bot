@@ -3810,20 +3810,23 @@ class TradingEngine:
         # ── DIAGNOSTIC LOG: tampilkan hasil analisa final per coin ──
         # Tujuan: visibility filter mana yang paling sering block signal.
         # Format: SYM tf | q=QUALITY s=SCORE d=DIR k=KILLS sess=SESSION adx=ADX
+        # Di-skip saat backtest mode (ribuan candle per coin bikin log meledak).
         try:
-            if entry:
-                _q = entry.get('quality', '?')
-                _s = entry.get('confluence_score', 0)
-                _d = entry.get('direction', '?')
-                _k = entry.get('kill_count', 0)
-                _sess = entry.get('session', '?')
-                logger.info(
-                    f"📊 {symbol} {tf} | q={_q} s={_s} d={_d} k={_k} sess={_sess} adx={round(adx,1)}"
-                )
-            else:
-                logger.info(
-                    f"📊 {symbol} {tf} | q=None (tidak ada signal) adx={round(adx,1)} ema={et} htf={eth}"
-                )
+            import signal_generator as _sg
+            if not getattr(_sg, '_IS_BACKTEST', False):
+                if entry:
+                    _q = entry.get('quality', '?')
+                    _s = entry.get('confluence_score', 0)
+                    _d = entry.get('direction', '?')
+                    _k = entry.get('kill_count', 0)
+                    _sess = entry.get('session', '?')
+                    logger.info(
+                        f"📊 {symbol} {tf} | q={_q} s={_s} d={_d} k={_k} sess={_sess} adx={round(adx,1)}"
+                    )
+                else:
+                    logger.info(
+                        f"📊 {symbol} {tf} | q=None (tidak ada signal) adx={round(adx,1)} ema={et} htf={eth}"
+                    )
         except Exception:
             pass
 

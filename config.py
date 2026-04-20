@@ -178,7 +178,7 @@ SIGNAL_PARAMS = {
     # score_good=22 — batas minimum GOOD (sweet spot 22-23)
     # score_hard_reject=24 — score 24+ selalu dead zone (EV negatif konsisten)
     'score_ideal'      : 999,  # Nonaktif
-    'score_good'       : 20,   # GOOD: score 20-23 (DITURUNKAN dari 22 — sample terlalu sedikit di live)
+    'score_good'       : 18,   # TEST: relax 20→18 (data backtest: 18-19 WR 64-67% masih di atas target 60%)
     'score_moderate'   : 17,   # MODERATE: score 17-19 (DITURUNKAN dari 21)
     'score_wait'       : 1,
     'score_cap_good'   : 24,   # Cap: score 24+ masuk dead zone, hard reject
@@ -191,7 +191,7 @@ SIGNAL_PARAMS = {
     # MODERATE max 1 kill (dari 2) — 2 kills = hard reject untuk semua tier
     'max_kills_hard_reject': 2,   # >= 2 kills = hard reject (semua tier)
     'max_kills_ideal'      : 0,
-    'max_kills_good'       : 0,   # DIPERKETAT 1→0: GOOD wajib bersih, 0 kill factor
+    'max_kills_good'       : 1,   # TEST: relax 0→1 (data live: 1 kill WR 70% > 0 kill 67%)
     'max_kills_moderate'   : 1,   # DIPERKETAT 2→1: MODERATE max 1 kill saja
 
     # Entry / SL / TP geometry
