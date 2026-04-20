@@ -318,6 +318,25 @@ class BitunixTrader:
             logger.debug(f"has_pending_order {sym}: {e}")
             return False
 
+    def get_all_pending_orders(self) -> list:
+        """
+        Return semua pending limit orders (yang belum filled).
+        Dipakai untuk tampilan /posisi agar user tahu ada order pending.
+        """
+        try:
+            data = self._get("/api/v1/futures/trade/get_pending_orders", {})
+            if data.get('code') != 0:
+                return []
+            orders = data.get('data', {})
+            if isinstance(orders, dict):
+                return orders.get('orderList', [])
+            if isinstance(orders, list):
+                return orders
+            return []
+        except Exception as e:
+            logger.debug(f"get_all_pending_orders: {e}")
+            return []
+
     # ── SET LEVERAGE ──────────────────────────────────────────
 
     def set_leverage(self, symbol: str, leverage: int) -> bool:

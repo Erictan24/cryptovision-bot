@@ -1815,30 +1815,51 @@ class TelegramBot:
             import asyncio as aio
             loop = aio.get_event_loop()
             positions = await loop.run_in_executor(None, self.trader.get_positions)
-            if not positions:
-                await msg.edit_text("Tidak ada posisi terbuka."); return
+            pending = await loop.run_in_executor(None, self.trader.get_all_pending_orders)
+
+            if not positions and not pending:
+                await msg.edit_text("Tidak ada posisi terbuka & tidak ada pending order."); return
+
             def _p(v):
                 v = float(v)
                 if v >= 100: return f"{v:.2f}"
                 if v >= 1:   return f"{v:.4f}"
                 return f"{v:.6f}"
-            text = "POSISI AKTIF (" + str(len(positions)) + ")\n\n"
-            for pos in positions:
-                side = pos.get("side", ""); entry = float(pos.get("avgOpenPrice", 0))
-                pnl  = float(pos.get("unrealizedPNL", 0)); qty = float(pos.get("qty", 0))
-                realized = float(pos.get("realizedPNL", 0)); margin = float(pos.get("margin", 0))
-                lev = pos.get("leverage", "?"); sym = pos.get("symbol", "")
-                d   = "LONG" if side == "BUY" else "SHORT"
-                ico = "🟢" if side == "BUY" else "🔴"
-                pct = (pnl / margin * 100) if margin > 0 else 0
-                try: mark = entry + (pnl/qty) if side == "BUY" else entry - (pnl/qty)
-                except: mark = entry
-                text += ico + " " + sym + " " + d + " x" + str(lev) + "\n"
-                text += "  Entry: " + _p(entry) + " | Mark: " + _p(mark) + "\n"
-                text += "  Qty: " + str(qty) + "\n"
-                text += "  PnL: " + f"{pnl:+.4f}" + " (" + f"{pct:+.1f}" + "%)\n"
-                text += "  Real: " + f"{realized:+.4f}" + "\n\n"
-            text += "/close [coin] untuk close"
+
+            text = ""
+            if positions:
+                text += "POSISI AKTIF (" + str(len(positions)) + ")\n\n"
+                for pos in positions:
+                    side = pos.get("side", ""); entry = float(pos.get("avgOpenPrice", 0))
+                    pnl  = float(pos.get("unrealizedPNL", 0)); qty = float(pos.get("qty", 0))
+                    realized = float(pos.get("realizedPNL", 0)); margin = float(pos.get("margin", 0))
+                    lev = pos.get("leverage", "?"); sym = pos.get("symbol", "")
+                    d   = "LONG" if side == "BUY" else "SHORT"
+                    ico = "🟢" if side == "BUY" else "🔴"
+                    pct = (pnl / margin * 100) if margin > 0 else 0
+                    try: mark = entry + (pnl/qty) if side == "BUY" else entry - (pnl/qty)
+                    except: mark = entry
+                    text += ico + " " + sym + " " + d + " x" + str(lev) + "\n"
+                    text += "  Entry: " + _p(entry) + " | Mark: " + _p(mark) + "\n"
+                    text += "  Qty: " + str(qty) + "\n"
+                    text += "  PnL: " + f"{pnl:+.4f}" + " (" + f"{pct:+.1f}" + "%)\n"
+                    text += "  Real: " + f"{realized:+.4f}" + "\n\n"
+
+            if pending:
+                text += "PENDING LIMIT ORDER (" + str(len(pending)) + ")\n\n"
+                for o in pending:
+                    sym = o.get("symbol", "")
+                    side = o.get("side", "") or o.get("tradeSide", "")
+                    price = float(o.get("price", 0) or 0)
+                    qty = float(o.get("qty", 0) or o.get("size", 0) or 0)
+                    d = "LONG" if side.upper() in ("BUY", "LONG") else "SHORT"
+                    ico = "🟡"
+                    text += ico + " " + sym + " " + d + " LIMIT\n"
+                    text += "  Entry: " + _p(price) + "\n"
+                    text += "  Qty: " + str(qty) + "\n"
+                    text += "  Status: menunggu harga sampai entry\n\n"
+
+            text += "/close [coin] untuk close posisi"
             await self._safe_edit(msg, text)
         except Exception as e:
             await msg.edit_text(str(e)[:300])
