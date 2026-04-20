@@ -358,7 +358,8 @@ class BitunixTrader:
                     qty: Optional[float] = None,
                     quality: str = 'GOOD',
                     signal_data: dict = None,
-                    btc_state: str = 'NEUTRAL') -> dict:
+                    btc_state: str = 'NEUTRAL',
+                    notify_fn=None) -> dict:
         """
         Open posisi futures dengan SL + TP1 + TP2.
 
@@ -538,7 +539,7 @@ class BitunixTrader:
                 symbol=symbol, direction=direction,
                 entry=entry, sl=sl, tp1=tp1, tp2=tp2,
                 qty_tp1=qty_tp1, close_side=close_side,
-                order_id=order_id,
+                order_id=order_id, notify_fn=notify_fn,
             )
 
         # Simpan data posisi ke file untuk resume saat bot restart
@@ -705,7 +706,8 @@ class BitunixTrader:
         return self.move_sl_to_bep(symbol, new_sl)
 
     def _start_limit_entry_monitor(self, symbol, direction, entry, sl,
-                                   tp1, tp2, qty_tp1, close_side, order_id):
+                                   tp1, tp2, qty_tp1, close_side, order_id,
+                                   notify_fn=None):
         """
         Monitor background untuk LIMIT order.
         Tugasnya:
@@ -757,7 +759,7 @@ class BitunixTrader:
                                 tp1_placed = True
 
                                 # Kirim notif ke Telegram
-                                if self._notify_fn:
+                                if notify_fn:
                                     try:
                                         import asyncio
                                         loop = asyncio.new_event_loop()
@@ -773,7 +775,7 @@ class BitunixTrader:
                                             "SL     : " + str(round(sl, 8)) + "\n\n" +
                                             "👁️ TP1 monitor aktif — SL geser ke BEP saat TP1 kena"
                                         )
-                                        loop.run_until_complete(self._notify_fn(msg))
+                                        loop.run_until_complete(notify_fn(msg))
                                         loop.close()
                                     except Exception:
                                         pass
@@ -785,7 +787,7 @@ class BitunixTrader:
                                     entry=actual_entry,
                                     tp1=tp1,
                                     direction=direction,
-                                    notify_fn=self._notify_fn,
+                                    notify_fn=notify_fn,
                                 )
                                 break  # selesai — tp1 monitor yang lanjut
 
@@ -826,7 +828,7 @@ class BitunixTrader:
         t.start()
         logger.info(f"⏳ Limit entry monitor started untuk {symbol}")
 
-    def resume_monitors_on_startup(self):
+    def resume_monitors_on_startup(self, notify_fn=None):
         """
         Resume semua monitor setelah bot restart:
         1. Posisi filled tanpa TP1 order → pasang TP1 retroactively + start TP1 monitor
@@ -942,7 +944,7 @@ class BitunixTrader:
                     symbol=sym, direction=direction,
                     entry=entry_p, sl=sl_p, tp1=tp1_p, tp2=tp2_p,
                     qty_tp1=qty_tp1, close_side=close_side,
-                    order_id=order_id,
+                    order_id=order_id, notify_fn=notify_fn,
                 )
                 resumed_limit += 1
                 logger.info(f"🔄 Resume limit monitor {sym} {direction} @ {entry_p}")

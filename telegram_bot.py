@@ -8,6 +8,7 @@ Safe Markdown: fallback to plain text on parse error.
 import logging
 import asyncio
 import threading
+import functools
 from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -230,7 +231,7 @@ class TelegramBot:
                     import threading
                     def _resume():
                         import time; time.sleep(5)  # tunggu 5 detik biar koneksi stabil
-                        self.trader.resume_monitors_on_startup()
+                        self.trader.resume_monitors_on_startup(notify_fn=self._make_notify_fn())
                     threading.Thread(target=_resume, daemon=True).start()
             except Exception as te:
                 logger.warning(f"BitunixTrader init error: {te}")
@@ -1446,11 +1447,15 @@ class TelegramBot:
                 # Eksekusi — pass signal_data untuk learning engine
                 btc_state = sig.get('_btc_state', 'NEUTRAL')
                 result = await loop.run_in_executor(
-                    None, self.trader.place_order,
-                    symbol, direction,
-                    sig.get("entry", 0), sig.get("sl", 0),
-                    sig.get("tp1", 0), sig.get("tp2", 0),
-                    None, quality, sig, btc_state,
+                    None,
+                    functools.partial(
+                        self.trader.place_order,
+                        symbol, direction,
+                        sig.get("entry", 0), sig.get("sl", 0),
+                        sig.get("tp1", 0), sig.get("tp2", 0),
+                        None, quality, sig, btc_state,
+                        self._make_notify_fn(),
+                    ),
                 )
 
                 if result and result.get("ok"):
@@ -1583,11 +1588,15 @@ class TelegramBot:
                     # Execute trade — pass signal_data untuk learning engine
                     btc_state  = sig.get('_btc_state', 'NEUTRAL')
                     result_order = await loop.run_in_executor(
-                        None, self.trader.place_order,
-                        symbol, direction,
-                        sig.get("entry", 0), sig.get("sl", 0),
-                        sig.get("tp1", 0), sig.get("tp2", 0),
-                        None, quality, sig, btc_state,
+                        None,
+                        functools.partial(
+                            self.trader.place_order,
+                            symbol, direction,
+                            sig.get("entry", 0), sig.get("sl", 0),
+                            sig.get("tp1", 0), sig.get("tp2", 0),
+                            None, quality, sig, btc_state,
+                            self._make_notify_fn(),
+                        ),
                     )
 
                     if result_order and result_order.get("ok"):
