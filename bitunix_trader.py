@@ -289,6 +289,35 @@ class BitunixTrader:
                 return pos
         return None
 
+    def has_pending_order(self, symbol: str) -> bool:
+        """
+        Cek apakah ada pending LIMIT order untuk coin ini.
+        Berbeda dengan get_open_position yang hanya cek posisi FILLED.
+        Penting untuk mencegah dobel order saat bot restart — limit order
+        yang belum trigger tidak muncul di get_positions tapi tetap aktif.
+        """
+        sym = symbol.upper().replace('/USDT', '').replace('USDT', '') + 'USDT'
+        try:
+            data = self._get("/api/v1/futures/trade/get_pending_orders", {"symbol": sym})
+            if data.get('code') != 0:
+                return False
+            orders = data.get('data', {})
+            if isinstance(orders, dict):
+                order_list = orders.get('orderList', [])
+            elif isinstance(orders, list):
+                order_list = orders
+            else:
+                order_list = []
+            # Filter order yang masih aktif (belum filled/canceled)
+            for o in order_list:
+                o_sym = o.get('symbol', '').upper()
+                if o_sym == sym:
+                    return True
+            return False
+        except Exception as e:
+            logger.debug(f"has_pending_order {sym}: {e}")
+            return False
+
     # ── SET LEVERAGE ──────────────────────────────────────────
 
     def set_leverage(self, symbol: str, leverage: int) -> bool:
@@ -353,6 +382,11 @@ class BitunixTrader:
         # Cek sudah ada posisi di coin ini
         if self.get_open_position(symbol):
             return {'ok': False, 'msg': f'Sudah ada posisi {sym} terbuka — skip'}
+
+        # Cek juga pending LIMIT order — penting saat bot restart,
+        # limit yang belum trigger tidak muncul di get_positions
+        if self.has_pending_order(symbol):
+            return {'ok': False, 'msg': f'Sudah ada limit order {sym} pending — skip'}
 
         # ── Hitung qty dari nominal risk (USD tetap) ─────────
         if qty is None:
