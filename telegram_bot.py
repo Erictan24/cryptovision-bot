@@ -1514,7 +1514,7 @@ class TelegramBot:
             coins = await loop.run_in_executor(None, self.engine.get_top_coins, 100)
 
             traded = 0
-            MAX_PER_CYCLE = 1  # max 1 posisi per 30 menit
+            MAX_PER_CYCLE = 3  # max 3 posisi per 30 menit — risk $1 × 3 = $3/cycle
 
             for symbol in coins:
                 if traded >= MAX_PER_CYCLE:
