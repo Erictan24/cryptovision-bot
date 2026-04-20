@@ -1350,9 +1350,10 @@ class TelegramBot:
             for cid in list(self.chat_ids):
                 await self._safe_send(cid, text)
 
-            # ── AUTO TRADE dari signal terbaik ──────────────────
-            if self.trader and self.trader.is_ready:
-                await self._auto_execute_signals(top)
+            # NOTE: auto-trade dari daily digest DIHAPUS (2026-04-20).
+            # Dulu bikin dobel order karena auto_execute_best_signal (30 menit)
+            # juga execute signal yang sama. Sekarang daily digest cuma
+            # broadcast info — semua trading via _auto_execute_best_signal.
 
         except Exception as e:
             logger.error(f"Auto daily error: {e}", exc_info=True)
