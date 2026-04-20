@@ -828,47 +828,129 @@ class BitunixTrader:
 
     def resume_monitors_on_startup(self):
         """
-        Resume semua TP1 monitor untuk posisi yang masih terbuka setelah restart.
-        Dipanggil satu kali saat bot start.
+        Resume semua monitor setelah bot restart:
+        1. Posisi filled tanpa TP1 order → pasang TP1 retroactively + start TP1 monitor
+        2. Pending limit order → re-start limit entry monitor (agar TP1 ke-pasang saat fill)
         """
         if not self.is_ready:
             return
 
         try:
             positions = self.get_positions()
-            if not positions:
-                return
+            pending   = self.get_all_pending_orders()
 
-            resumed = 0
+            # ── STEP 1: Resume monitor untuk posisi FILLED ──
+            resumed_filled = 0
             for pos in positions:
-                sym   = pos.get('symbol', '').replace('USDT', '')
-                side  = pos.get('side', '')
+                sym_pair = pos.get('symbol', '')
+                sym      = sym_pair.replace('USDT', '')
+                side     = pos.get('side', '')
                 direction = 'LONG' if side in ('BUY', 'LONG') else 'SHORT'
-                entry = float(pos.get('avgOpenPrice', 0))
+                entry    = float(pos.get('avgOpenPrice', 0))
+                qty      = float(pos.get('qty', 0))
+                pos_id   = pos.get('positionId', '')
 
                 if not entry or sym in self._active_monitors:
                     continue
 
-                # Ambil TP1 dari saved positions
                 saved = self._saved_positions.get(sym, {})
                 tp1   = float(saved.get('tp1', 0))
+                sl    = float(saved.get('sl', 0))
 
-                # Kalau tidak ada TP1 tersimpan — hitung dari risk 1.5x
+                # Fallback TP1 kalau tidak tersimpan
                 if not tp1:
-                    sl  = float(saved.get('sl', 0))
                     if sl:
                         risk = abs(entry - sl)
-                        tp1  = entry + risk * 1.5 if direction == 'LONG' else entry - risk * 1.5
+                        tp1 = entry + risk * 1.5 if direction == 'LONG' else entry - risk * 1.5
                     else:
-                        # Fallback: 1.5% dari entry
                         tp1 = entry * 1.015 if direction == 'LONG' else entry * 0.985
+
+                # Cek apakah TP1 reduce-only order sudah ada di exchange
+                has_tp1_order = any(
+                    o.get('symbol', '').upper() == sym_pair.upper()
+                    and (o.get('reduceOnly') in (True, 'true', 'TRUE', 1))
+                    for o in pending
+                )
+
+                # Kalau TP1 belum ada → pasang sekarang (recover dari limit monitor yang mati)
+                if not has_tp1_order and qty > 0 and tp1 > 0:
+                    try:
+                        _, precision = self.get_min_qty(sym)
+                        qty_tp1 = round(qty * 0.5, precision)
+                        if qty_tp1 > 0:
+                            close_side = "SELL" if direction == "LONG" else "BUY"
+                            tp1_body = {
+                                "symbol"     : sym_pair,
+                                "side"       : close_side,
+                                "tradeSide"  : "CLOSE",
+                                "orderType"  : "LIMIT",
+                                "price"      : str(round(tp1, 8)),
+                                "qty"        : str(qty_tp1),
+                                "positionId" : str(pos_id),
+                                "reduceOnly" : True,
+                                "effect"     : "GTC",
+                                "clientId"   : f"tp1resume_{int(time.time())}",
+                            }
+                            r = self._post("/api/v1/futures/trade/place_order", tp1_body)
+                            if r.get('code') == 0:
+                                logger.info(f"🔧 TP1 dipasang retroactively {sym} @ {tp1} (dari restart)")
+                            else:
+                                logger.warning(f"⚠️ Gagal pasang TP1 retro {sym}: {r.get('msg','')}")
+                    except Exception as _e:
+                        logger.warning(f"TP1 retro error {sym}: {_e}")
 
                 logger.info(f"🔄 Resume monitor {sym} {direction} entry={entry} tp1={tp1}")
                 self.start_tp1_monitor(sym, entry, tp1, direction, notify_fn=None)
-                resumed += 1
+                resumed_filled += 1
 
-            if resumed > 0:
-                logger.info(f"✅ {resumed} TP1 monitor di-resume setelah restart")
+            # ── STEP 2: Resume limit entry monitor untuk PENDING limit ──
+            resumed_limit = 0
+            filled_syms = {pos.get('symbol', '').upper() for pos in positions}
+
+            for o in pending:
+                o_sym = o.get('symbol', '').upper()
+                if not o_sym.endswith('USDT'):
+                    continue
+                # Skip kalau posisi untuk symbol ini sudah filled (bukan entry order lagi)
+                if o_sym in filled_syms:
+                    continue
+                # Skip reduce-only (itu TP/SL)
+                if o.get('reduceOnly') in (True, 'true', 'TRUE', 1):
+                    continue
+
+                sym = o_sym.replace('USDT', '')
+                saved = self._saved_positions.get(sym, {})
+                if not saved:
+                    continue  # tidak ada data saved, skip
+
+                direction = saved.get('direction', '')
+                entry_p = float(saved.get('entry', 0))
+                sl_p    = float(saved.get('sl', 0))
+                tp1_p   = float(saved.get('tp1', 0))
+                tp2_p   = float(saved.get('tp2', 0))
+                qty_p   = float(saved.get('qty', 0))
+
+                if not (direction and entry_p and tp1_p and qty_p):
+                    continue
+
+                _, precision = self.get_min_qty(sym)
+                qty_tp1 = round(qty_p * 0.5, precision)
+                close_side = "SELL" if direction == "LONG" else "BUY"
+                order_id = o.get('orderId', '')
+
+                self._start_limit_entry_monitor(
+                    symbol=sym, direction=direction,
+                    entry=entry_p, sl=sl_p, tp1=tp1_p, tp2=tp2_p,
+                    qty_tp1=qty_tp1, close_side=close_side,
+                    order_id=order_id,
+                )
+                resumed_limit += 1
+                logger.info(f"🔄 Resume limit monitor {sym} {direction} @ {entry_p}")
+
+            if resumed_filled:
+                logger.info(f"✅ {resumed_filled} TP1 monitor di-resume setelah restart")
+            if resumed_limit:
+                logger.info(f"✅ {resumed_limit} limit entry monitor di-resume setelah restart")
 
         except Exception as e:
             logger.error(f"resume_monitors_on_startup error: {e}")
