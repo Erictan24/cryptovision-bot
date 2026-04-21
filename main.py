@@ -57,6 +57,9 @@ class CryptoSignalBot:
         # Start weekly auto-tune (Senin dini hari)
         self._start_weekly_autotune()
 
+        # Start scalp paper trade scanner (15 menit interval)
+        self._start_scalp_paper()
+
         try:
             while True:
                 time.sleep(1)
@@ -180,6 +183,43 @@ class CryptoSignalBot:
         t = threading.Thread(target=autotune_loop, daemon=True)
         t.start()
         logger.info("🔧 Weekly auto-tune scheduler: Senin jam 02:00")
+
+    # ==================================================================
+    # SCALP PAPER TRADE — scan 15m, track TP/SL tanpa eksekusi
+    # ==================================================================
+    def _start_scalp_paper(self):
+        """
+        Start scalp paper trade scan (15 menit interval).
+        Kirim notif signal ke Telegram, track TP/SL.
+        TIDAK eksekusi order real ke exchange.
+        """
+        try:
+            from scalp_live_runner import start_scalp_live
+
+            def coins_fn():
+                # Pakai top coin yang sudah difilter (Bitunix + vol $10M)
+                try:
+                    return self.tg.engine.get_top_coins(50)
+                except Exception:
+                    from config import SCAN_POOL
+                    return list(SCAN_POOL)[:30]
+
+            def notify_fn_sync():
+                return self.tg._make_notify_fn()
+
+            # Delay init agar telegram bot siap dulu
+            def delayed_start():
+                time.sleep(30)
+                start_scalp_live(
+                    coins_fn=coins_fn,
+                    notify_fn=self.tg._make_notify_fn(),
+                    risk_usd=1.0,
+                )
+
+            threading.Thread(target=delayed_start, daemon=True).start()
+            logger.info("📊 Scalp paper trade scheduler: 15 menit scan")
+        except Exception as e:
+            logger.error(f"Gagal start scalp paper: {e}", exc_info=True)
 
     def _trigger_async(self, coro):
         """Jalankan coroutine dari thread biasa."""

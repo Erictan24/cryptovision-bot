@@ -269,6 +269,7 @@ class TelegramBot:
             ("train",     self.cmd_train),
             ("verify",    self.cmd_verify),
             ("reset_pnl", self.cmd_reset_pnl),
+            ("scalp_stats", self.cmd_scalp_stats),
         ]
         for name, handler in cmds:
             self.app.add_handler(CommandHandler(name, handler))
@@ -520,6 +521,24 @@ class TelegramBot:
     # ==================================================================
     # /verify — Admin approves payment
     # ==================================================================
+    async def cmd_scalp_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Tampilkan rekap paper trade scalp."""
+        try:
+            from scalp_live_runner import get_paper_trader
+            pt = get_paper_trader()
+            text = pt.format_stats_msg()
+            # Tambahkan open trades
+            opens = pt.get_open_trades()
+            if opens:
+                text += "\n\n📂 OPEN PAPER TRADES:\n"
+                for o in opens[:10]:
+                    ico = "🟢" if o['direction'] == 'LONG' else "🔴"
+                    text += (f"{ico} #{o['id']} {o['symbol']} "
+                             f"{o['direction']} entry {o['entry_price']}\n")
+            await update.message.reply_text(text)
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+
     async def cmd_reset_pnl(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Reset display PnL bulanan/tahunan — mulai dari sekarang."""
         if not self.trader:
