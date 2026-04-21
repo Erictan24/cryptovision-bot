@@ -268,6 +268,7 @@ class TelegramBot:
             ("learn",     self.cmd_learn),
             ("train",     self.cmd_train),
             ("verify",    self.cmd_verify),
+            ("reset_pnl", self.cmd_reset_pnl),
         ]
         for name, handler in cmds:
             self.app.add_handler(CommandHandler(name, handler))
@@ -519,6 +520,25 @@ class TelegramBot:
     # ==================================================================
     # /verify — Admin approves payment
     # ==================================================================
+    async def cmd_reset_pnl(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Reset display PnL bulanan/tahunan — mulai dari sekarang."""
+        if not self.trader:
+            await update.message.reply_text("❌ Trader tidak aktif.")
+            return
+        info = self.trader.reset_pnl_tracking()
+        text = (
+            "🔄 PnL TRACKING DI-RESET\n" +
+            "=" * 28 + "\n" +
+            f"Timestamp  : {info['reset_date']}\n\n" +
+            "Monthly  : $0.00 (0 trades)\n" +
+            "Yearly   : $0.00 (0 trades)\n\n" +
+            "Trade closed SEBELUM waktu ini\n" +
+            "tidak dihitung lagi.\n" +
+            "Posisi yang masih jalan (BCH, 1000PEPE)\n" +
+            "akan masuk hitungan setelah close."
+        )
+        await update.message.reply_text(text)
+
     async def cmd_verify(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Admin verifies payment and activates subscription."""
         admin_id = os.getenv('ADMIN_TELEGRAM_ID', '')

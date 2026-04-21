@@ -136,6 +136,11 @@ class BitunixTrader:
         self._positions_file = 'data/active_positions.json'
         self._saved_positions = self._load_saved_positions()
 
+        # Reset timestamp untuk PnL display — trade SEBELUM timestamp ini
+        # tidak dihitung ke monthly/yearly PnL. Diset via /reset_pnl command.
+        self._pnl_reset_file = 'data/pnl_reset.json'
+        self._pnl_reset_ts   = self._load_pnl_reset_ts()
+
         # ── Circuit breaker — consecutive loss protection ────────
         # Kalau 2 SL berturut-turut → pause trading 4 jam otomatis.
         # Reset setiap kali ada TP1 hit atau trade profit.
@@ -1162,6 +1167,47 @@ class BitunixTrader:
         from datetime import datetime as dt
         return dt.now().strftime('%Y-%m')
 
+    def _load_pnl_reset_ts(self) -> int:
+        """Load reset timestamp (ms) dari file, default 0 (no reset)."""
+        import json, os
+        try:
+            if os.path.exists(self._pnl_reset_file):
+                with open(self._pnl_reset_file, 'r') as f:
+                    return int(json.load(f).get('reset_ts', 0))
+        except Exception:
+            pass
+        return 0
+
+    def reset_pnl_tracking(self) -> dict:
+        """
+        Reset display PnL bulanan/tahunan — mulai hitung dari sekarang.
+        Trade closed SEBELUM timestamp ini tidak akan di-count.
+        """
+        import json, os
+        from datetime import datetime as dt
+        now_ms = int(dt.now().timestamp() * 1000)
+        self._pnl_reset_ts = now_ms
+        try:
+            os.makedirs(os.path.dirname(self._pnl_reset_file), exist_ok=True)
+            with open(self._pnl_reset_file, 'w') as f:
+                json.dump({
+                    'reset_ts'  : now_ms,
+                    'reset_date': dt.now().strftime('%Y-%m-%d %H:%M:%S'),
+                }, f)
+        except Exception as e:
+            logger.warning(f"Save pnl_reset gagal: {e}")
+
+        # Reset in-memory counters
+        self._monthly_pnl_usd = self._monthly_profit_usd = self._monthly_loss_usd = 0.0
+        self._monthly_trades = self._monthly_wins = 0
+        self._yearly_pnl_usd = self._yearly_profit_usd = self._yearly_loss_usd = 0.0
+        self._yearly_trades = self._yearly_wins = 0
+
+        return {
+            'reset_ts'  : now_ms,
+            'reset_date': dt.now().strftime('%Y-%m-%d %H:%M:%S'),
+        }
+
     def sync_monthly_pnl_from_exchange(self):
         """
         Sync PnL bulanan — match persis dengan tampilan Bitunix.
@@ -1195,11 +1241,13 @@ class BitunixTrader:
             trades       = 0
             wins         = 0
 
-            # Filter by mtime (waktu TUTUP) — hanya trade yang ditutup bulan ini
+            # Filter by mtime (waktu TUTUP) — skip trade sebelum awal bulan
+            # ATAU sebelum reset_ts (kalau user baru /reset_pnl)
+            cutoff_ts = max(start_ts, self._pnl_reset_ts)
             for pos in positions:
                 mtime = int(pos.get('mtime', 0))
-                if mtime > 0 and mtime < start_ts:
-                    continue  # ditutup sebelum awal bulan — skip
+                if mtime > 0 and mtime < cutoff_ts:
+                    continue  # ditutup sebelum cutoff — skip
                 pnl = float(pos.get('realizedPNL', 0))
                 trades += 1
                 if pnl > 0:
@@ -1244,7 +1292,12 @@ class BitunixTrader:
                 return
 
             total_profit = total_loss = trades = wins = 0.0
+            # Skip trade sebelum reset_ts (kalau user /reset_pnl)
+            cutoff_ts = max(start_ts, self._pnl_reset_ts)
             for pos in positions:
+                mtime = int(pos.get('mtime', 0))
+                if mtime > 0 and mtime < cutoff_ts:
+                    continue
                 pnl = float(pos.get('realizedPNL', 0))
                 trades += 1
                 if pnl > 0:
