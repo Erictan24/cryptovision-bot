@@ -407,13 +407,23 @@ def _build_entry(direction, zone, price, atr, res_mtf, sup_mtf, liq_pools):
                 tp1_label = c['label']
                 break
 
-    # Cap TP1 ke resistance/support terdekat jika melewati
+    # Cap TP1 ke resistance/support terdekat jika melewati.
+    # Tapi skip cap kalau hasilnya < 0.6R (obstacle terlalu dekat entry,
+    # bikin TP1 tipis gak berguna). Lebih baik biarkan TP1 default 1.2R —
+    # kalau harga stuck di obstacle, SL kena; kalau breakout, TP1 dapat profit layak.
+    _min_rr_after_cap = 0.6
     if nearest_obstacle and is_long and tp1 >= nearest_obstacle:
-        tp1 = nearest_obstacle * 0.997
-        tp1_label = "Bawah Resist"
+        capped_tp1 = nearest_obstacle * 0.997
+        capped_rr  = (capped_tp1 - entry) / risk
+        if capped_rr >= _min_rr_after_cap:
+            tp1 = capped_tp1
+            tp1_label = "Bawah Resist"
     elif nearest_obstacle and not is_long and tp1 <= nearest_obstacle:
-        tp1 = nearest_obstacle * 1.003
-        tp1_label = "Atas Support"
+        capped_tp1 = nearest_obstacle * 1.003
+        capped_rr  = (entry - capped_tp1) / risk
+        if capped_rr >= _min_rr_after_cap:
+            tp1 = capped_tp1
+            tp1_label = "Atas Support"
 
     # ── Pilih TP2 ─────────────────────────────────────────────
     # TP2 boleh lebih jauh, tapi tetap harus reasonable
