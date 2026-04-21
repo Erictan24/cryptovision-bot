@@ -3855,17 +3855,21 @@ class TradingEngine:
     # ==================================================================
     def get_top_coins(self, limit=100):
         """
-        Ambil top coins by volume dari Binance Futures.
+        Ambil top coins by volume dari Binance Futures, filter ke
+        coin yang tersedia di Bitunix (exchange tempat bot trading).
 
-        PERBAIKAN: Dulu pakai CryptoCompare (hanya return 5 coin).
-        Sekarang pakai Binance Futures 24hr ticker — 1 call, data lengkap,
-        diurutkan berdasarkan volume USDT tertinggi (paling likuid = paling
-        banyak ditrading institusi).
+        Filter sampah:
+          - Min volume 24h $10M (sebelumnya $1M — terlalu rendah)
+          - Harus tersedia di Bitunix (intersect)
+          - Buang stablecoin, leveraged token, commodity
         """
         cache_key = f"top_coins_{limit}"
         cached = self._cache_get(self.price_cache, cache_key)
         if cached is not None:
             return cached
+
+        # Ambil daftar coin tersedia di Bitunix (cached per session)
+        bitunix_coins = self._get_bitunix_available_coins()
 
         # Binance Futures 24hr ticker — return semua pairs sekaligus
         all_tickers = self._http_get(
@@ -3875,6 +3879,11 @@ class TradingEngine:
             'USDT','USDC','BUSD','DAI','TUSD','FDUSD','USDD','USDP',
             'WBTC','WETH','STETH','WSTETH','RETH','CBETH','FRAX','LUSD',
             'GUSD','USDE','WBNB','BTCB','LBTC','USDX',
+        }
+        # Tokenized saham — bukan crypto, gerakan beda total
+        tokenized_stocks = {
+            'INTC','NVDA','AAPL','MSFT','TSLA','GOOGL','META','AMZN',
+            'COIN','MSTR','NFLX','AMD','QCOM','SPY','QQQ',
         }
 
         coins = []
@@ -3888,17 +3897,26 @@ class TradingEngine:
                 sym = sym_pair[:-4]
                 if sym in stablecoins:
                     continue
+                # Buang tokenized stocks (INTC, NVDA, dll) — bukan crypto
+                if sym in tokenized_stocks:
+                    continue
+                # Buang non-ASCII names (mandarin, cyrillic, dll)
+                if not sym.isascii() or not sym.replace('_', '').isalnum():
+                    continue
                 # Buang leveraged token (UP/DOWN/BULL/BEAR suffix)
                 if any(sym.endswith(s) for s in ('UP','DOWN','BULL','BEAR','3L','3S')):
                     continue
                 # Buang commodity/index futures (bukan crypto)
-                if sym in ('XAU','XAG','CL','BZ','GC','SI','NG'):
+                if sym in ('XAU','XAG','CL','BZ','GC','SI','NG','XPT','XPD'):
                     continue
                 # Buang simbol terlalu pendek (kemungkinan bukan crypto normal)
                 if len(sym) < 2:
                     continue
                 vol = float(t.get('quoteVolume', 0) or 0)
-                if vol < 1_000_000:   # Min $1 juta volume 24h
+                if vol < 10_000_000:   # Min $10 juta volume 24h (buang sampah)
+                    continue
+                # Filter: hanya coin yang tersedia di Bitunix
+                if bitunix_coins and sym not in bitunix_coins:
                     continue
                 valid.append((sym, vol))
 
@@ -3915,6 +3933,37 @@ class TradingEngine:
             coins = list(SCAN_POOL) if isinstance(SCAN_POOL, set) else SCAN_POOL
 
         return coins
+
+    def _get_bitunix_available_coins(self) -> set:
+        """
+        Ambil semua coin USDT yang tradable di Bitunix Futures.
+        Cache per-session supaya tidak hit API tiap scan.
+        Return set of base coin names (e.g. {'BTC', 'ETH', ...}).
+        """
+        cache_key = "bitunix_coins"
+        cached = self._cache_get(self.price_cache, cache_key)
+        if cached is not None:
+            return cached
+
+        try:
+            data = self._http_get(
+                "https://fapi.bitunix.com/api/v1/futures/market/trading_pairs"
+            )
+            if data and data.get('code') == 0:
+                coins = set()
+                for pair in data.get('data', []):
+                    if pair.get('symbolStatus') != 'OPEN':
+                        continue
+                    sym = pair.get('symbol', '')
+                    if sym.endswith('USDT'):
+                        coins.add(sym[:-4])
+                if coins:
+                    self.price_cache[cache_key] = (coins, time.time())
+                    logger.info(f"Bitunix: {len(coins)} coin tradable")
+                    return coins
+        except Exception as e:
+            logger.warning(f"Fetch Bitunix pairs gagal: {e}")
+        return set()  # empty = tidak filter (fallback safety)
 
     # ==================================================================
     # QUICK SCREENING — fase 1: filter cepat pakai harga saja
