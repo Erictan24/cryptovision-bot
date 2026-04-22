@@ -232,6 +232,16 @@ class BitunixTrader:
         except Exception as e:
             logger.warning(f"Gagal simpan posisi {symbol}: {e}")
 
+    def _save_positions_to_file(self):
+        """Flush self._saved_positions ke file (tanpa tambah/ubah entry)."""
+        try:
+            import json, os
+            os.makedirs('data', exist_ok=True)
+            with open(self._positions_file, 'w') as f:
+                json.dump(self._saved_positions, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Gagal flush saved positions: {e}")
+
     def _remove_saved_position(self, symbol: str):
         """Hapus posisi dari file saat sudah close."""
         try:
@@ -879,8 +889,19 @@ class BitunixTrader:
                     for o in pending
                 )
 
-                # Kalau TP1 belum ada → pasang sekarang (recover dari limit monitor yang mati)
-                if not has_tp1_order and qty > 0 and tp1 > 0:
+                # Cek apakah TP1 SUDAH PERNAH KENA — jangan re-place!
+                tp1_already_hit = bool(saved.get('tp1_hit', False))
+
+                # Fallback detection: qty sekarang < qty_original × 0.7
+                # (artinya sudah partial closed, kemungkinan via TP1)
+                qty_original = float(saved.get('qty', 0))
+                if qty_original > 0 and qty < qty_original * 0.7:
+                    tp1_already_hit = True
+                    logger.info(f"ℹ️ {sym}: qty {qty} < {qty_original*0.7:.4f} "
+                                f"(qty awal {qty_original}) — TP1 sudah kena")
+
+                # Kalau TP1 belum ada DAN belum pernah kena → pasang baru
+                if not has_tp1_order and not tp1_already_hit and qty > 0 and tp1 > 0:
                     try:
                         _, precision = self.get_min_qty(sym)
                         qty_tp1 = round(qty * 0.5, precision)
@@ -1027,6 +1048,16 @@ class BitunixTrader:
                         if result.get('ok'):
                             bep_done = True
                             logger.info(f"✅ BEP terpasang {sym} @ {entry} — monitor lanjut TP2")
+                            # Simpan flag tp1_hit supaya resume_monitors tidak re-place TP1
+                            try:
+                                clean_sym = sym.replace('USDT', '')
+                                saved = self._saved_positions.get(clean_sym, {})
+                                saved['tp1_hit'] = True
+                                saved['tp1_hit_at'] = datetime.now().isoformat()
+                                self._saved_positions[clean_sym] = saved
+                                self._save_positions_to_file()
+                            except Exception as _se:
+                                logger.debug(f"Save tp1_hit flag gagal: {_se}")
                         else:
                             bep_attempts = 0
                             logger.warning(f"⚠️ BEP gagal {sym}: {result.get('msg')} — retry berikutnya")
