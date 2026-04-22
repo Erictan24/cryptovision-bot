@@ -79,8 +79,10 @@ def _scan_coin(symbol: str) -> Optional[dict]:
         df_15m = _fetch_binance_klines(symbol, '15m', 200)
         df_1h  = _fetch_binance_klines(symbol, '1h', 100)
         if df_15m is None or len(df_15m) < 80:
+            logger.debug(f"scalp {symbol}: 15m data kurang")
             return None
         if df_1h is None or len(df_1h) < 55:
+            logger.debug(f"scalp {symbol}: 1h data kurang")
             return None
 
         # Indicators dari 15m
@@ -224,12 +226,23 @@ def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
     def scan_loop():
         time.sleep(120)  # grace period setelah bot start
         logger.info("⚡ Scalp paper scan dimulai (15 menit interval)")
+        scan_count = 0
         while True:
             try:
+                scan_count += 1
                 coins = coins_fn()
                 signals_found = 0
+                scan_errors  = 0
+                t_start = time.time()
+                logger.info(f"📡 Scalp scan #{scan_count}: {len(coins)} coins")
+
                 for coin in coins:
-                    sig = _scan_coin(coin)
+                    try:
+                        sig = _scan_coin(coin)
+                    except Exception as e:
+                        scan_errors += 1
+                        logger.warning(f"Scalp scan {coin} error: {e}")
+                        continue
                     if sig is None:
                         continue
 
@@ -242,8 +255,11 @@ def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
 
                     time.sleep(0.3)  # rate limit buffer
 
-                if signals_found:
-                    logger.info(f"✅ Scalp scan selesai: {signals_found} signal baru")
+                elapsed = time.time() - t_start
+                logger.info(
+                    f"✅ Scalp scan #{scan_count} selesai "
+                    f"({elapsed:.0f}s): {signals_found} signal, "
+                    f"{scan_errors} error")
             except Exception as e:
                 logger.error(f"Scalp scan error: {e}", exc_info=True)
             time.sleep(SCALP_SCAN_INTERVAL)
