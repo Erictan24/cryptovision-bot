@@ -552,21 +552,34 @@ class TelegramBot:
             await update.message.reply_text(f"❌ Error: {e}")
 
     async def cmd_reset_pnl(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Reset display PnL bulanan/tahunan — mulai dari sekarang."""
-        if not self.trader:
-            await update.message.reply_text("❌ Trader tidak aktif.")
-            return
-        info = self.trader.reset_pnl_tracking()
+        """Reset SEMUA history — /trade (bulanan/tahunan), /stats, /trades.
+        Yang disimpan: posisi yang masih OPEN saja."""
+        # 1. Reset PnL tracking di bitunix_trader (bulanan/tahunan)
+        reset_info = None
+        if self.trader:
+            reset_info = self.trader.reset_pnl_tracking()
+
+        # 2. Clear closed trades di TradeTracker (stats & trades)
+        tracker_cleared = 0
+        tracker_kept = 0
+        if self.tracker:
+            before = len(self.tracker.trades)
+            self.tracker.trades = [t for t in self.tracker.trades
+                                   if t.get('status') == 'OPEN']
+            tracker_kept = len(self.tracker.trades)
+            tracker_cleared = before - tracker_kept
+            self.tracker._save()
+
+        ts_str = reset_info['reset_date'] if reset_info else 'now'
         text = (
-            "🔄 PnL TRACKING DI-RESET\n" +
+            "🔄 RESET SEMUA HISTORY\n" +
             "=" * 28 + "\n" +
-            f"Timestamp  : {info['reset_date']}\n\n" +
-            "Monthly  : $0.00 (0 trades)\n" +
-            "Yearly   : $0.00 (0 trades)\n\n" +
-            "Trade closed SEBELUM waktu ini\n" +
-            "tidak dihitung lagi.\n" +
-            "Posisi yang masih jalan (BCH, 1000PEPE)\n" +
-            "akan masuk hitungan setelah close."
+            f"Timestamp : {ts_str}\n\n" +
+            "✅ /trade bulanan/tahunan → $0 (0 trades)\n" +
+            f"✅ /stats /trades → hapus {tracker_cleared} closed trade\n" +
+            f"✅ Open trade tetap aktif: {tracker_kept}\n\n" +
+            "Posisi yang masih OPEN tetap jalan.\n" +
+            "Trade baru ke depan akan dihitung dari 0."
         )
         await update.message.reply_text(text)
 
