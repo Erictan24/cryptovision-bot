@@ -199,7 +199,7 @@ class CryptoSignalBot:
             def coins_fn():
                 # Pakai top coin yang sudah difilter (Bitunix + vol $10M)
                 try:
-                    return self.tg.engine.get_top_coins(50)
+                    return self.tg.engine.get_top_coins(100)
                 except Exception:
                     from config import SCAN_POOL
                     return list(SCAN_POOL)[:30]
