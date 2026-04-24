@@ -83,6 +83,52 @@ def set_active_sp(override):
 
 
 # ============================================================
+# FRESH EMA CROSS DETECTOR (anti-flip veto)
+# ============================================================
+
+def _detect_fresh_ema_cross(df_main, max_bars: int = 5) -> dict:
+    """
+    Deteksi fresh EMA 8/21 cross dalam max_bars terakhir.
+
+    Bug LINK (2026-04-24): SHORT signal trigger meski Golden Cross fresh +
+    slope EMA8 naik. Macro context bearish tapi local momentum reversed.
+    Veto SHORT setelah fresh Golden Cross (dan mirror untuk LONG/Death Cross)
+    untuk hindari fight nascent reversal.
+
+    Returns:
+        {'type': 'GOLDEN'/'DEATH'/None, 'bars_ago': int, 'slope_up': bool}
+    """
+    if df_main is None or len(df_main) < 22:
+        return {'type': None, 'bars_ago': 999, 'slope_up': False, 'slope_down': False}
+
+    cls = df_main['close']
+    e8 = calc_ema(cls, 8)
+    e21 = calc_ema(cls, 21)
+
+    cross_type = None
+    bars_ago = 999
+    for i in range(1, min(max_bars + 1, len(e8))):
+        prev_diff = e8.iloc[-i - 1] - e21.iloc[-i - 1]
+        curr_diff = e8.iloc[-i] - e21.iloc[-i]
+        if prev_diff <= 0 and curr_diff > 0:
+            cross_type = 'GOLDEN'
+            bars_ago = i
+            break
+        if prev_diff >= 0 and curr_diff < 0:
+            cross_type = 'DEATH'
+            bars_ago = i
+            break
+
+    slope_e8 = e8.iloc[-1] - e8.iloc[-3] if len(e8) >= 3 else 0
+    return {
+        'type': cross_type,
+        'bars_ago': bars_ago,
+        'slope_up': slope_e8 > 0,
+        'slope_down': slope_e8 < 0,
+    }
+
+
+# ============================================================
 # DIRECTION SCORER
 # ============================================================
 
@@ -614,6 +660,18 @@ def generate_entry_signal(
 
     eval_long  = not (bear_ev >= bull_ev + 2)
     eval_short = not (bull_ev >= bear_ev + 2)
+
+    # ── FRESH EMA CROSS VETO (Bug LINK fix, 2026-04-24) ──────────────────
+    # Bug: SHORT trigger meski Golden Cross fresh + EMA8 slope naik.
+    # Macro context bearish (HTF, structure, SMC) tapi local 1H momentum
+    # baru saja flip bullish. Entering SHORT di sini = fight nascent reversal.
+    # Hard veto: fresh cross dalam 5 candle + slope searah = no trade
+    # melawan arah cross.
+    fresh_cross = _detect_fresh_ema_cross(df_main, max_bars=5)
+    if fresh_cross['type'] == 'GOLDEN' and fresh_cross['slope_up']:
+        eval_short = False
+    elif fresh_cross['type'] == 'DEATH' and fresh_cross['slope_down']:
+        eval_long = False
 
     cached      = signal_cache.get(symbol,{}) if signal_cache else {}
     hours_since = (time.time() - cached.get('ts',0)) / 3600 if cached else 999

@@ -174,25 +174,26 @@ SIGNAL_PARAMS = {
     'freshness_retest_atr'   : 0.6,   # Diperlebar mengikuti zone width
 
     # Signal quality thresholds
-    # IDEAL nonaktif (999) — semua signal masuk GOOD
-    # score_good=22 — batas minimum GOOD (sweet spot 22-23)
-    # score_hard_reject=24 — score 24+ selalu dead zone (EV negatif konsisten)
+    # Volume-first philosophy (2026-04-24): Total Profit = EV × Volume.
+    # WR target turun ke 50-60%, volume target naik 3-4x.
+    # score_good=16, score_moderate=14 (dari 17) — allow score 14-15 masuk MODERATE
+    # min_confluence_score=14 (dari 17) — gate absolut ikut turun
     'score_ideal'      : 999,  # Nonaktif
-    'score_good'       : 18,   # TEST: relax 20→18 (data backtest: 18-19 WR 64-67% masih di atas target 60%)
-    'score_moderate'   : 17,   # MODERATE: score 17-19 (DITURUNKAN dari 21)
+    'score_good'       : 16,
+    'score_moderate'   : 14,   # RELAX 17→14: allow signal score 14-15 (volume up)
     'score_wait'       : 1,
-    'score_cap_good'   : 24,   # Cap: score 24+ masuk dead zone, hard reject
+    'score_cap_good'   : 24,   # Cap: score 24+ dead zone, hard reject
     'score_hard_reject'   : 24,
-    'min_confluence_score': 17,   # Minimum absolut — score di bawah ini buang
+    'min_confluence_score': 14,   # RELAX 17→14: ikut score_moderate
 
     # Kill factors
-    # Data training: kills=1 WR 27.3%, kills=2 WR 17.5% — makin banyak kill makin buruk
-    # GOOD sekarang wajib 0 kills (dari 1) — 1 kill langsung turun ke MODERATE
-    # MODERATE max 1 kill (dari 2) — 2 kills = hard reject untuk semua tier
-    'max_kills_hard_reject': 2,   # >= 2 kills = hard reject (semua tier)
+    # Data: kills=0 WR 67%, kills=1 WR 70%, kills=2 WR 60% — semua masih EV positif
+    # max_kills_moderate 1→2: allow kills=2 masuk MODERATE (WR 60% acceptable)
+    # max_kills_hard_reject 2→3: konsisten dengan max_kills_moderate=2
+    'max_kills_hard_reject': 3,   # RELAX 2→3: >= 3 kills = hard reject
     'max_kills_ideal'      : 0,
-    'max_kills_good'       : 1,   # TEST: relax 0→1 (data live: 1 kill WR 70% > 0 kill 67%)
-    'max_kills_moderate'   : 1,   # DIPERKETAT 2→1: MODERATE max 1 kill saja
+    'max_kills_good'       : 1,
+    'max_kills_moderate'   : 2,   # RELAX 1→2: kills=2 WR 60%, masih profitable
 
     # Entry / SL / TP geometry
     'entry_depth_pct'   : 0.3,

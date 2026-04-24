@@ -75,10 +75,32 @@ logger = logging.getLogger(__name__)
 
 # ── Unified Coin Pool ───────────────────────────────────────
 DEFAULT_COINS = [
-    'BTC', 'ETH', 'XRP', 'SOL', 'DOGE',
-    'ADA', 'SUI', 'AVAX', 'LTC', 'FET',
-    'DOT', 'ARB', 'OP', 'TON', 'INJ',
-    'APT', 'SEI', 'WLD', 'FIL', 'TAO',
+    # Mega cap
+    'BTC', 'ETH', 'XRP', 'SOL', 'BNB',
+    'DOGE', 'ADA', 'TRX', 'AVAX', 'LINK',
+    # Large cap
+    'SUI', 'TON', 'DOT', 'NEAR', 'LTC',
+    'BCH', 'UNI', 'APT', 'ICP', 'ETC',
+    'STX', 'INJ', 'TAO', 'HBAR', 'IMX',
+    'FET', 'OP', 'ARB', 'WLD', 'SEI',
+    # Mid cap aktif
+    'TIA', 'STRK', 'PYTH', 'JUP', 'WIF',
+    'ORDI', 'PENDLE', 'KAS', 'ONDO', 'LDO',
+    'BLUR', 'GRT', 'DYDX', 'MKR', 'AAVE',
+    'ATOM', 'FIL', 'SAND', 'MANA', 'AXS',
+    # Established alts
+    'GMX', 'ENS', 'CRV', 'SNX', 'THETA',
+    'ALGO', 'VET', 'EOS', 'XTZ', 'CAKE',
+    'XLM', 'ZEC', 'DASH', 'GALA', 'MAGIC',
+    'RENDER', 'JTO', 'DYM', 'MANTA', 'NOT',
+    # Emerging / memecoin liquid
+    'PEPE', 'BONK', 'FLOKI', 'SHIB', 'BOME',
+    'POPCAT', 'PNUT', 'CATI', 'HMSTR', 'DOGS',
+    'GOAT', 'VIRTUAL', 'SONIC', 'MOVE', 'GRASS',
+    'EIGEN', 'ZRO', 'ETHFI', 'SAGA', 'IO',
+    # Tambahan liquid Bitunix
+    'ACT', 'HYPE', 'TRUMP', 'MELANIA', 'FARTCOIN',
+    'MOODENG', 'MEW', 'KAIA', 'USUAL', 'BANANA',
 ]
 
 
