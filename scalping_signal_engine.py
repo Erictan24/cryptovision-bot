@@ -2381,15 +2381,24 @@ def _determine_scalp_quality_v43(score: int, kills: int,
 
     v5.9 tried kills=1 as WAIT → data: kills=1 PnL -1.98R dari 25 trades.
     Scalping 15m terlalu sensitif — 1 kill sudah fatal.
-    Reverted: kills>=1 = reject (original behavior).
-    """
-    if kills >= 1:
-        return None
 
-    if score >= good_threshold:
-        return 'GOOD'
-    if score >= wait_threshold:
-        return 'WAIT'
+    UPDATE 2026-04-24: allow kills=1 as WAIT LAGI karena sekarang ada
+    Opsi A (WAIT = 0.5x risk), Opsi C (coin learning aggressive).
+    Blast radius kills=1 sudah diabatasi 50% + coin jelek cepat di-block.
+    """
+    if kills >= 2:
+        return None  # hard reject
+
+    # kills = 0: bisa GOOD atau WAIT berdasarkan score
+    # kills = 1: cap ke WAIT (0.5x risk)
+    if kills == 0:
+        if score >= good_threshold:
+            return 'GOOD'
+        if score >= wait_threshold:
+            return 'WAIT'
+    else:  # kills == 1
+        if score >= wait_threshold:
+            return 'WAIT'
     return None
 
 
@@ -2933,11 +2942,7 @@ def generate_scalping_signal(
         else:
             sl = price + risk
 
-    # v5.9.1: TP MODERATE — sweet spot dari 2x backtest.
-    # v5.7 (0.5/1.0/1.5R): BEP 35% — TP1 terlalu ketat, noise trigger.
-    # v5.9 (0.75/1.3/2.0R): SL 17%, EXPIRED 32% — TP terlalu jauh.
-    # v5.9.1 (0.65/1.0/1.5R): TP1 sedikit lebih jauh dari noise,
-    # tapi TP2/TP3 tetap achievable. TP1 0.65R = ~0.5% move (genuine).
+    # v5.9.1 BASELINE — TEMPORARY revert for apple-to-apple comparison
     if direction == 'LONG':
         tp1 = price + risk * 0.65
         tp2 = price + risk * 1.0

@@ -19,7 +19,10 @@ import scalp_trade_journal as journal
 logger = logging.getLogger(__name__)
 
 CACHE_PATH = 'data/scalp_coin_params.json'
-MIN_TRADES_FOR_ADAPTATION = 15  # minimal trade untuk bisa adapt
+# Opsi C (2026-04-24): threshold diperketat untuk block coin jelek lebih cepat.
+# Data 100 coin: SOL/SUI/SEI/VIRTUAL drag 5-8R per coin sebelum di-block.
+# Min trades turun 15→10 biar adapt lebih cepat.
+MIN_TRADES_FOR_ADAPTATION = 10
 
 
 # Default params (coin tanpa history)
@@ -124,8 +127,9 @@ class CoinLearning:
                 'reason': f'EV negative ({ev:.2f}R)',
             }
 
-        # Hard block kalau WR < 30%
-        if wr < 30:
+        # Hard block kalau WR < 40% (was 30%) — Opsi C (2026-04-24):
+        # lebih agresif block coin jelek setelah ≥10 trade.
+        if wr < 40:
             return {
                 'score_good_threshold': 999,
                 'score_wait_threshold': 999,
@@ -133,6 +137,17 @@ class CoinLearning:
                 'allow_trading': False,
                 'confidence': 'BLOCKED',
                 'reason': f'WR too low ({wr:.0f}%)',
+            }
+
+        # Hard block kalau EV < 0.1R (marginal coin = tidak worth it)
+        if ev < 0.1:
+            return {
+                'score_good_threshold': 999,
+                'score_wait_threshold': 999,
+                'min_trend_strength': 100,
+                'allow_trading': False,
+                'confidence': 'BLOCKED',
+                'reason': f'EV marginal ({ev:.2f}R)',
             }
 
         # Recent form check

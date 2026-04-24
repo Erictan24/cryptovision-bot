@@ -439,11 +439,17 @@ class BitunixTrader:
                     return {'ok': False, 'msg': 'Gagal ambil balance'}
                 risk_amount = balance * (self.risk_pct / 100)
 
-            # Risk scaling berdasarkan balance + quality tier
-            # Tujuan: compound growth — risk naik seiring balance naik
-            # GOOD dan IDEAL pakai risk_usd penuh (bukan hardcode $1/$2)
-            # karena WR setelah filter 60%+ sudah validated.
-            # Balance-based scaling akan dihandle di level atas (risk_usd di .env)
+            # Opsi A (2026-04-24): Quality-based risk sizing (Kelly lite).
+            # Data 105 trades: GOOD WR 57% EV +0.39R | WAIT WR 45% EV +0.11R
+            # Backtest: naik 34% total PnL tanpa ubah volume.
+            # IDEAL = 1.5x (konfluensi penuh), GOOD = 1.0x, MODERATE = 0.7x, WAIT = 0.5x
+            _quality_mult = {
+                'IDEAL': 1.5,
+                'GOOD': 1.0,
+                'MODERATE': 0.7,
+                'WAIT': 0.5,
+            }.get(quality.upper(), 1.0)
+            risk_amount *= _quality_mult
 
             raw_qty  = risk_amount / risk_per_unit
             qty      = self.round_qty(raw_qty, symbol)
@@ -1002,6 +1008,8 @@ class BitunixTrader:
             bep_done     = False
             stage2_done  = False
             stage3_done  = False
+            stage4_sl    = None   # Opsi D: runner trail SL setelah +3R
+            extreme_px   = entry  # high/low ekstrem sejak entry
             initial_qty  = None   # catat qty awal posisi
             bep_attempts = 0      # batasi percobaan BEP
 
@@ -1130,6 +1138,49 @@ class BitunixTrader:
                                         pass
                             else:
                                 logger.warning(f"⚠️ Stage3 SL gagal {sym}: {r3.get('msg')}")
+
+                    # ── Stage 4 (Opsi D 2026-04-24): Runner trail ──────
+                    # Setelah +3R dari entry, trail SL ketat = extreme ± 0.5R.
+                    # Tidak ada cap profit — SL naik setiap harga bergerak searah.
+                    # Exit hanya saat harga retrace 0.5R dari ekstrem.
+                    if stage3_done and risk_dist > 0:
+                        if is_long:
+                            extreme_px = max(extreme_px, current)
+                        else:
+                            extreme_px = min(extreme_px, current)
+
+                        trigger_4 = entry + risk_dist * 3.0 if is_long else entry - risk_dist * 3.0
+                        stage4_active = (is_long and extreme_px >= trigger_4) or (not is_long and extreme_px <= trigger_4)
+
+                        if stage4_active:
+                            # Trail SL = ekstrem ± 0.5R
+                            if is_long:
+                                new_trail = extreme_px - risk_dist * 0.5
+                                # Hanya update kalau lebih tinggi dari SL terakhir
+                                should_move = stage4_sl is None or new_trail > stage4_sl + risk_dist * 0.2
+                            else:
+                                new_trail = extreme_px + risk_dist * 0.5
+                                should_move = stage4_sl is None or new_trail < stage4_sl - risk_dist * 0.2
+
+                            if should_move:
+                                logger.info(f"🏃 Stage4 {sym}: ekstrem {extreme_px} → trail SL ke {new_trail:.6g}")
+                                r4 = self.move_sl_trailing(symbol, new_trail)
+                                if r4.get('ok'):
+                                    stage4_sl = new_trail
+                                    logger.info(f"✅ Stage4 trail {sym} @ {new_trail:.6g}")
+                                    if notify_fn and callable(notify_fn):
+                                        try:
+                                            import asyncio
+                                            loop = asyncio.new_event_loop()
+                                            r_locked = abs(new_trail - entry) / risk_dist
+                                            loop.run_until_complete(notify_fn(
+                                                "🏃 RUNNER TRAIL — " + sym + "\n" +
+                                                "   Ekstrem: " + str(round(extreme_px, 8)) + "\n" +
+                                                "   SL baru: " + str(round(new_trail, 8)) + f" (+{r_locked:.1f}R terkunci)"
+                                            ))
+                                            loop.close()
+                                        except Exception:
+                                            pass
 
                 except Exception as e:
                     logger.debug(f"Monitor {sym} error: {e}")

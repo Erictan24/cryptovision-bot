@@ -53,10 +53,32 @@ CACHE_FILE = os.path.join(CACHE_DIR, 'scalp_data.pkl')
 
 # Coin pool untuk backtest — 20 coin paling likuid
 DEFAULT_COINS = [
-    'BTC', 'ETH', 'XRP', 'SOL', 'DOGE',
-    'ADA', 'SUI', 'AVAX', 'LTC', 'FET',
-    'DOT', 'ARB', 'OP', 'TON', 'INJ',
-    'APT', 'SEI', 'WLD', 'FIL', 'TAO',
+    # Mega cap
+    'BTC', 'ETH', 'XRP', 'SOL', 'BNB',
+    'DOGE', 'ADA', 'TRX', 'AVAX', 'LINK',
+    # Large cap
+    'SUI', 'TON', 'DOT', 'NEAR', 'LTC',
+    'BCH', 'UNI', 'APT', 'ICP', 'ETC',
+    'STX', 'INJ', 'TAO', 'HBAR', 'IMX',
+    'FET', 'OP', 'ARB', 'WLD', 'SEI',
+    # Mid cap aktif
+    'TIA', 'STRK', 'PYTH', 'JUP', 'WIF',
+    'ORDI', 'PENDLE', 'KAS', 'ONDO', 'LDO',
+    'BLUR', 'GRT', 'DYDX', 'MKR', 'AAVE',
+    'ATOM', 'FIL', 'SAND', 'MANA', 'AXS',
+    # Established alts
+    'GMX', 'ENS', 'CRV', 'SNX', 'THETA',
+    'ALGO', 'VET', 'EOS', 'XTZ', 'CAKE',
+    'XLM', 'ZEC', 'DASH', 'GALA', 'MAGIC',
+    'RENDER', 'JTO', 'DYM', 'MANTA', 'NOT',
+    # Emerging / memecoin liquid
+    'PEPE', 'BONK', 'FLOKI', 'SHIB', 'BOME',
+    'POPCAT', 'PNUT', 'CATI', 'HMSTR', 'DOGS',
+    'GOAT', 'VIRTUAL', 'SONIC', 'MOVE', 'GRASS',
+    'EIGEN', 'ZRO', 'ETHFI', 'SAGA', 'IO',
+    # Tambahan liquid Bitunix
+    'ACT', 'HYPE', 'TRUMP', 'MELANIA', 'FARTCOIN',
+    'MOODENG', 'MEW', 'KAIA', 'USUAL', 'BANANA',
 ]
 
 # Backtest parameters
@@ -242,13 +264,18 @@ def fetch_all_data(coins: list, days: int, force: bool = False) -> dict:
 # ── 2. TRADE SIMULATOR ─────────────────────────────────────
 def simulate_trade(signal: dict, df_future: pd.DataFrame) -> TradeResult:
     """
-    Simulasi trade setelah signal muncul.
+    Simulasi trade dengan upgrade 2026-04-24:
 
-    v5.9.1: BEP buffer REVERTED.
-      v5.9 BEP buffer -0.15R bikin 13 BEP trades cost -1.95R (sebelumnya 0R).
-      Data: BEP at 0R lebih baik — trade yang BEP memang sideways noise.
-      Trailing: TP1 hit → SL ke entry (0R). TP2 hit → SL ke TP1 (lock TP1).
-      MAX_TRADE_BARS 10 (2.5 jam, compromise antara 8 dan 12).
+    Opsi A — Quality risk multiplier:
+      GOOD = 1.5x base risk, WAIT = 0.5x. PnL final di-multiply.
+
+    Opsi B — Partial close TP1 50%:
+      TP1 hit → close 50% (lock +0.5*rr1), 50% lanjut dengan trailing.
+      Final PnL = partial + (0.5 × outcome 50% sisa).
+
+    Opsi D — Runner trail setelah TP3:
+      TP3 hit tidak langsung exit. Trail SL ketat (0.5R buffer di belakang
+      high/low ekstrem) untuk capture move yang lanjut beyond TP3.
 
     Returns: TradeResult
     """
@@ -263,91 +290,111 @@ def simulate_trade(signal: dict, df_future: pd.DataFrame) -> TradeResult:
     risk = abs(entry - sl)
     rr3 = abs(tp3 - entry) / risk if risk > 0 else 1.5
 
-    # v5.9.1: BEP reverted ke exact entry (0R)
-    bep_sl = entry  # exact BEP — no buffer
+    quality = signal.get('quality', 'WAIT')
+    risk_mult = {'GOOD': 1.5, 'WAIT': 0.5}.get(quality, 1.0)
+
+    bep_sl = entry
 
     tp1_hit = False
     tp2_hit = False
+    tp3_hit = False
+    partial_pnl = 0.0
+    extreme_price = entry
     current_sl = sl
     max_bars = min(MAX_TRADE_BARS, len(df_future))
+
+    def _close(outcome: str, bar: int, remainder_r: float) -> TradeResult:
+        total_r = partial_pnl + (0.5 if tp1_hit else 1.0) * remainder_r
+        return _make_result(signal, outcome, bar,
+                            round(total_r * risk_mult, 3))
 
     for i in range(max_bars):
         high_i = df_future['high'].iloc[i]
         low_i = df_future['low'].iloc[i]
 
         if direction == 'LONG':
-            # Cek SL dulu (worst case)
+            extreme_price = max(extreme_price, high_i)
+
+            # Runner trail (Opsi D): setelah TP3, SL ke (extreme - 0.5R)
+            if tp3_hit:
+                trail_sl = extreme_price - 0.5 * risk
+                if trail_sl > current_sl:
+                    current_sl = trail_sl
+
             if low_i <= current_sl:
+                if tp3_hit:
+                    exit_r = (current_sl - entry) / risk if risk else rr3
+                    return _close('TP3_TRAIL', i + 1, exit_r)
                 if tp2_hit:
-                    return _make_result(signal, 'TP2', i + 1, rr2)
-                elif tp1_hit:
-                    return _make_result(signal, 'BEP', i + 1, 0.0)
-                else:
-                    return _make_result(signal, 'SL', i + 1, -1.0)
+                    return _close('TP2', i + 1, rr2)
+                if tp1_hit:
+                    return _close('BEP', i + 1, 0.0)
+                return _close('SL', i + 1, -1.0)
 
-            # Cek TP3
-            if high_i >= tp3 and tp2_hit:
-                return _make_result(signal, 'TP3', i + 1, rr3)
+            if high_i >= tp3 and tp2_hit and not tp3_hit:
+                tp3_hit = True
+                current_sl = max(current_sl, tp3)  # lock TP3 minimum — never loose
 
-            # Cek TP2
-            if high_i >= tp2:
-                if not tp2_hit:
-                    tp2_hit = True
-                    current_sl = tp1  # SL naik ke TP1 (lock TP1 profit)
+            if high_i >= tp2 and not tp2_hit:
+                tp2_hit = True
+                current_sl = tp1
 
-            # Cek TP1
-            if high_i >= tp1:
-                if not tp1_hit:
-                    tp1_hit = True
-                    current_sl = bep_sl  # SL naik ke BEP (entry)
+            if high_i >= tp1 and not tp1_hit:
+                tp1_hit = True
+                partial_pnl = 0.5 * rr1  # close 50% di TP1
+                current_sl = bep_sl
 
         else:  # SHORT
-            # Cek SL dulu
+            extreme_price = min(extreme_price, low_i)
+
+            if tp3_hit:
+                trail_sl = extreme_price + 0.5 * risk
+                if trail_sl < current_sl:
+                    current_sl = trail_sl
+
             if high_i >= current_sl:
+                if tp3_hit:
+                    exit_r = (entry - current_sl) / risk if risk else rr3
+                    return _close('TP3_TRAIL', i + 1, exit_r)
                 if tp2_hit:
-                    return _make_result(signal, 'TP2', i + 1, rr2)
-                elif tp1_hit:
-                    return _make_result(signal, 'BEP', i + 1, 0.0)
-                else:
-                    return _make_result(signal, 'SL', i + 1, -1.0)
+                    return _close('TP2', i + 1, rr2)
+                if tp1_hit:
+                    return _close('BEP', i + 1, 0.0)
+                return _close('SL', i + 1, -1.0)
 
-            # Cek TP3
-            if low_i <= tp3 and tp2_hit:
-                return _make_result(signal, 'TP3', i + 1, rr3)
+            if low_i <= tp3 and tp2_hit and not tp3_hit:
+                tp3_hit = True
+                current_sl = min(current_sl, tp3)  # lock TP3 minimum
 
-            # Cek TP2
-            if low_i <= tp2:
-                if not tp2_hit:
-                    tp2_hit = True
-                    current_sl = tp1
+            if low_i <= tp2 and not tp2_hit:
+                tp2_hit = True
+                current_sl = tp1
 
-            # Cek TP1
-            if low_i <= tp1:
-                if not tp1_hit:
-                    tp1_hit = True
-                    current_sl = bep_sl
+            if low_i <= tp1 and not tp1_hit:
+                tp1_hit = True
+                partial_pnl = 0.5 * rr1
+                current_sl = bep_sl
 
-    # Expired — hitung actual PnL dari harga terakhir
+    # Expired
+    if tp3_hit:
+        # Belum kena trail SL → exit at last close, capped at extreme
+        return _close('TP3', max_bars, rr3)
     if tp2_hit:
-        return _make_result(signal, 'TP2', max_bars, rr2)
-    elif tp1_hit:
-        return _make_result(signal, 'TP1', max_bars, rr1)
-    else:
-        # Hitung actual PnL saat expire
-        last_close = df_future['close'].iloc[max_bars - 1] \
-            if max_bars <= len(df_future) else df_future['close'].iloc[-1]
-        risk = abs(entry - sl)
-        if risk > 0:
-            if direction == 'LONG':
-                actual_pnl = (last_close - entry) / risk
-            else:
-                actual_pnl = (entry - last_close) / risk
+        return _close('TP2', max_bars, rr2)
+    if tp1_hit:
+        return _close('TP1', max_bars, rr1)
+
+    last_close = df_future['close'].iloc[max_bars - 1] \
+        if max_bars <= len(df_future) else df_future['close'].iloc[-1]
+    if risk > 0:
+        if direction == 'LONG':
+            actual_pnl = (last_close - entry) / risk
         else:
-            actual_pnl = 0
-        # Cap: tidak bisa lebih buruk dari SL
-        actual_pnl = max(actual_pnl, -1.0)
-        return _make_result(signal, 'EXPIRED', max_bars,
-                            round(actual_pnl, 2))
+            actual_pnl = (entry - last_close) / risk
+    else:
+        actual_pnl = 0
+    actual_pnl = max(actual_pnl, -1.0)
+    return _close('EXPIRED', max_bars, actual_pnl)
 
 
 def _make_result(signal: dict, outcome: str, bars: int,
