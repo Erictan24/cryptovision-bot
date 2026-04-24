@@ -442,12 +442,14 @@ class BitunixTrader:
             # Opsi A (2026-04-24): Quality-based risk sizing (Kelly lite).
             # Data 105 trades: GOOD WR 57% EV +0.39R | WAIT WR 45% EV +0.11R
             # Backtest: naik 34% total PnL tanpa ubah volume.
-            # IDEAL = 1.5x (konfluensi penuh), GOOD = 1.0x, MODERATE = 0.7x, WAIT = 0.5x
+            # Update 2026-04-24: base risk $0.50 (validasi ketat).
+            #   IDEAL=1.5x → $0.75 | GOOD=1.0x → $0.50
+            #   MODERATE=0.7x → $0.35 | WAIT=0.6x → $0.30
             _quality_mult = {
                 'IDEAL': 1.5,
                 'GOOD': 1.0,
                 'MODERATE': 0.7,
-                'WAIT': 0.5,
+                'WAIT': 0.6,
             }.get(quality.upper(), 1.0)
             risk_amount *= _quality_mult
 
