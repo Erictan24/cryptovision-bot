@@ -1608,7 +1608,7 @@ class BitunixTrader:
         bal_str    = f"${balance:,.2f}" if balance is not None else "Error (cek API key)"
         # Risk display — reflect actual risk_usd setting dari .env
         if self.risk_usd > 0:
-            risk_display = f"${self.risk_usd:.0f} flat per trade"
+            risk_display = f"${self.risk_usd:.2f} flat per trade"
         else:
             risk_display = f"{self.risk_pct:.1f}% balance per trade"
 
