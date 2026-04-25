@@ -120,7 +120,7 @@ def _scan_coin(symbol: str) -> Optional[dict]:
         return None
 
 
-def _send_signal_notif(notify_fn, trade_id, signal):
+def _send_signal_notif(notify_fn, signal, real_trade=False):
     """Kirim notif ke Telegram saat scalp signal baru masuk."""
     if not notify_fn:
         return
@@ -139,8 +139,10 @@ def _send_signal_notif(notify_fn, trade_id, signal):
     except Exception:
         rr = 0
 
+    header = "✅ SCALP AUTO TRADE" if real_trade else "📊 SCALP SIGNAL"
+    footer = "👁️ TP1 monitor aktif" if real_trade else "[Paper trade — tidak dieksekusi]"
     msg = (
-        "📊 SCALP PAPER SIGNAL\n" +
+        header + "\n" +
         "=" * 28 + "\n" +
         f"{ico} {sym} {direction} [{qty}]\n" +
         f"Entry : {entry:.6g}\n" +
@@ -149,8 +151,7 @@ def _send_signal_notif(notify_fn, trade_id, signal):
         f"TP2   : {tp2:.6g}\n" +
         f"RR    : 1:{rr:.1f}\n" +
         f"Score : {score}\n\n" +
-        "[Paper trade — tidak dieksekusi]\n" +
-        f"Trade ID: {trade_id}"
+        footer
     )
     try:
         loop = asyncio.new_event_loop()
@@ -205,13 +206,14 @@ def get_paper_trader(notify_fn=None, risk_usd=1.0, max_positions=5):
 
 
 def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
-                     risk_usd: float = 1.0):
+                     risk_usd: float = 1.0, trader=None):
     """
-    Start scalp live paper trading di background thread.
+    Start scalp live trading di background thread.
 
     coins_fn  : callable yang return list of coin names (dipanggil tiap scan)
     notify_fn : async function untuk kirim notif ke Telegram
-    risk_usd  : $ per trade untuk display PnL
+    risk_usd  : $ per trade
+    trader    : BitunixTrader instance untuk eksekusi real. None = paper trade.
     """
     global _scan_started
     if _scan_started:
@@ -219,13 +221,19 @@ def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
         return
     _scan_started = True
 
+    use_real = trader is not None and getattr(trader, 'is_ready', False)
+    if use_real:
+        logger.info("📊 Scalp REAL MONEY mode aktif")
+    else:
+        logger.info("📊 Scalp PAPER TRADE mode aktif")
+
     pt = get_paper_trader(notify_fn=notify_fn, risk_usd=risk_usd,
                           max_positions=10)
 
     # ── Scan loop (generate signal) ──────────────────────
     def scan_loop():
         time.sleep(120)  # grace period setelah bot start
-        logger.info("⚡ Scalp paper scan dimulai (15 menit interval)")
+        logger.info("⚡ Scalp scan dimulai (15 menit interval)")
         scan_count = 0
         while True:
             try:
@@ -246,12 +254,43 @@ def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
                     if sig is None:
                         continue
 
-                    trade_id = pt.open_paper_trade(sig)
-                    if trade_id:
-                        signals_found += 1
-                        logger.info(f"📊 Paper signal #{trade_id}: "
-                                    f"{coin} {sig.get('direction')}")
-                        _send_signal_notif(notify_fn, trade_id, sig)
+                    if use_real:
+                        # Eksekusi real ke Bitunix — MARKET order (entry=0)
+                        try:
+                            result = trader.place_order(
+                                symbol=coin,
+                                direction=sig.get('direction', 'LONG'),
+                                entry=0,  # MARKET order — scalp butuh eksekusi cepat
+                                sl=sig.get('sl', 0),
+                                tp1=sig.get('tp1', 0),
+                                tp2=sig.get('tp2', 0),
+                                quality=sig.get('quality', 'GOOD'),
+                                signal_data=sig,
+                                notify_fn=notify_fn,
+                            )
+                            if result and result.get('ok'):
+                                signals_found += 1
+                                logger.info(f"✅ Scalp real #{signals_found}: {coin} {sig.get('direction')}")
+                                _send_signal_notif(notify_fn, sig, real_trade=True)
+                                # Start TP1 monitor
+                                trader.start_tp1_monitor(
+                                    symbol=coin,
+                                    entry=sig.get('entry', 0),
+                                    tp1=sig.get('tp1', 0),
+                                    direction=sig.get('direction', 'LONG'),
+                                    notify_fn=notify_fn,
+                                )
+                            else:
+                                msg = result.get('msg', '') if result else 'gagal'
+                                logger.info(f"⚠️ Scalp order skip {coin}: {msg}")
+                        except Exception as e:
+                            logger.warning(f"Scalp real order {coin} error: {e}")
+                    else:
+                        trade_id = pt.open_paper_trade(sig)
+                        if trade_id:
+                            signals_found += 1
+                            logger.info(f"📊 Paper signal #{trade_id}: {coin} {sig.get('direction')}")
+                            _send_signal_notif(notify_fn, sig, real_trade=False)
 
                     time.sleep(0.3)  # rate limit buffer
 

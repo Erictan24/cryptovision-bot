@@ -1535,7 +1535,7 @@ class TelegramBot:
                     q_mult     = 1.5 if quality == "IDEAL" else 1.0
                     risk_shown = round(self.trader.risk_usd * q_mult, 2)
                     notif = (
-                        "✅ AUTO TRADE EXECUTED\n" +
+                        "✅ SWING AUTO TRADE EXECUTED\n" +
                         "=" * 28 + "\n" +
                         ico + " " + symbol + " " + direction + " [" + quality + "]\n" +
                         "Entry: " + str(round(sig.get("entry",0), 6)) + "\n" +
@@ -1679,7 +1679,7 @@ class TelegramBot:
                         q_mult     = 1.5 if quality == "IDEAL" else 1.0
                         risk_shown = round(self.trader.risk_usd * q_mult, 2)
                         notif = (
-                            "✅ AUTO TRADE\n" +
+                            "✅ SWING AUTO TRADE\n" +
                             "=" * 28 + "\n" +
                             ico + " " + symbol + " " + direction + " [" + quality + "]\n" +
                             "Entry : " + str(round(sig.get("entry",0), 6)) + "\n" +

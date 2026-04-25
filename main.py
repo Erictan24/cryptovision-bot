@@ -189,35 +189,33 @@ class CryptoSignalBot:
     # ==================================================================
     def _start_scalp_paper(self):
         """
-        Start scalp paper trade scan (15 menit interval).
-        Kirim notif signal ke Telegram, track TP/SL.
-        TIDAK eksekusi order real ke exchange.
+        Start scalp live scan (15 menit interval).
+        Eksekusi order real ke Bitunix kalau trader siap.
         """
         try:
             from scalp_live_runner import start_scalp_live
+            import os
 
             def coins_fn():
-                # Pakai top coin yang sudah difilter (Bitunix + vol $10M)
                 try:
                     return self.tg.engine.get_top_coins(100)
                 except Exception:
                     from config import SCAN_POOL
                     return list(SCAN_POOL)[:30]
 
-            def notify_fn_sync():
-                return self.tg._make_notify_fn()
-
             # Delay init agar telegram bot siap dulu
             def delayed_start():
                 time.sleep(30)
+                risk_usd = float(os.getenv('TRADE_RISK_USD', '1.0'))
                 start_scalp_live(
                     coins_fn=coins_fn,
                     notify_fn=self.tg._make_notify_fn(),
-                    risk_usd=1.0,
+                    risk_usd=risk_usd,
+                    trader=self.tg.trader,
                 )
 
             threading.Thread(target=delayed_start, daemon=True).start()
-            logger.info("📊 Scalp paper trade scheduler: 15 menit scan")
+            logger.info("📊 Scalp live scan scheduler: 15 menit scan")
         except Exception as e:
             logger.error(f"Gagal start scalp paper: {e}", exc_info=True)
 
