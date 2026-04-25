@@ -933,7 +933,7 @@ class BitunixTrader:
                         logger.warning(f"TP1 retro error {sym}: {_e}")
 
                 logger.info(f"🔄 Resume monitor {sym} {direction} entry={entry} tp1={tp1}")
-                self.start_tp1_monitor(sym, entry, tp1, direction, notify_fn=None)
+                self.start_tp1_monitor(sym, entry, tp1, direction, notify_fn=notify_fn)
                 resumed_filled += 1
 
             # ── STEP 2: Resume limit entry monitor untuk PENDING limit ──
