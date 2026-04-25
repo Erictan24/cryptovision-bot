@@ -1200,7 +1200,9 @@ class BitunixTrader:
                 if positions_h:
                     last_pos  = positions_h[0]
                     last_pnl  = float(last_pos.get('pnl', last_pos.get('realizedPnl', 0)))
-                    trade_won = last_pnl > 0
+                    # BEP close = last_pnl ≈ 0 tapi tp1 sudah kena → bukan pure loss
+                    is_bep_close = bep_done and abs(last_pnl) < 0.01
+                    trade_won = last_pnl > 0 or is_bep_close
                     self.record_trade_result(
                         trade_won,
                         symbol=symbol,
@@ -1209,33 +1211,39 @@ class BitunixTrader:
                         notify_fn=notify_fn,
                         level_price=level_price,
                     )
-                    logger.info(f"📊 Trade {sym} selesai — {'PROFIT' if trade_won else 'LOSS'} ${last_pnl:.2f}")
+                    logger.info(f"📊 Trade {sym} selesai — {'PROFIT' if last_pnl > 0 else ('BEP' if is_bep_close else 'LOSS')} ${last_pnl:.2f}")
 
                     # Notif trade selesai
                     if notify_fn and callable(notify_fn):
                         try:
                             import asyncio
-                            if trade_won:
-                                stage = "TP3+" if stage3_done else ("TP2" if bep_done else "TP1")
+                            if last_pnl > 0:
+                                stage = "TP3+" if stage3_done else "TP2"
                                 msg = (
                                     "✅ TRADE SELESAI — " + sym + "\n"
                                     "========================\n"
                                     f"Hasil  : PROFIT {stage}\n"
-                                    f"PnL    : +${last_pnl:.2f} USDT\n"
-                                    f"BEP    : {'✅ Ya' if bep_done else '—'}"
+                                    f"PnL    : +${last_pnl:.2f} USDT"
+                                )
+                            elif is_bep_close:
+                                msg = (
+                                    "⚪ TRADE SELESAI — " + sym + "\n"
+                                    "========================\n"
+                                    "Hasil  : BEP (TP1 kena, sisa close di entry)\n"
+                                    f"PnL    : ${last_pnl:.2f} USDT"
                                 )
                             else:
                                 msg = (
                                     "❌ TRADE SELESAI — " + sym + "\n"
                                     "========================\n"
-                                    f"Hasil  : {'SL (setelah BEP)' if bep_done else 'SL'}\n"
+                                    f"Hasil  : {'SL setelah BEP' if bep_done else 'SL'}\n"
                                     f"PnL    : -${abs(last_pnl):.2f} USDT"
                                 )
                             loop = asyncio.new_event_loop()
                             loop.run_until_complete(notify_fn(msg))
                             loop.close()
-                        except Exception:
-                            pass
+                        except Exception as _ne:
+                            logger.warning(f"Notif trade selesai {sym} gagal: {_ne}")
             except Exception as _e:
                 logger.debug(f"record_trade_result error: {_e}")
 

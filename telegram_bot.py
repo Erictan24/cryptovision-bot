@@ -309,18 +309,20 @@ class TelegramBot:
 
     def _make_notify_fn(self):
         """
-        Buat fungsi async untuk kirim pesan ke semua chat_ids.
-        Digunakan sebagai notify_fn di TP1 monitor dan post-mortem.
+        Buat fungsi notify untuk kirim pesan ke semua chat_ids.
+        Pakai direct HTTP requests agar reliable dari background thread manapun.
         """
-        bot = self.app.bot
-        chat_ids = self.chat_ids
+        token     = TELEGRAM_BOT_TOKEN
+        chat_ids  = self.chat_ids
 
         async def _notify(text: str):
+            import requests as _req
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
             for cid in list(chat_ids):
                 try:
-                    await bot.send_message(chat_id=cid, text=text)
-                except Exception:
-                    pass
+                    _req.post(url, json={"chat_id": cid, "text": text}, timeout=10)
+                except Exception as e:
+                    logger.debug(f"notify HTTP error {cid}: {e}")
         return _notify
 
     async def _safe_send(self, chat_id, text):
