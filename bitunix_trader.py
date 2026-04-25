@@ -1210,6 +1210,32 @@ class BitunixTrader:
                         level_price=level_price,
                     )
                     logger.info(f"📊 Trade {sym} selesai — {'PROFIT' if trade_won else 'LOSS'} ${last_pnl:.2f}")
+
+                    # Notif trade selesai
+                    if notify_fn and callable(notify_fn):
+                        try:
+                            import asyncio
+                            if trade_won:
+                                stage = "TP3+" if stage3_done else ("TP2" if bep_done else "TP1")
+                                msg = (
+                                    "✅ TRADE SELESAI — " + sym + "\n"
+                                    "========================\n"
+                                    f"Hasil  : PROFIT {stage}\n"
+                                    f"PnL    : +${last_pnl:.2f} USDT\n"
+                                    f"BEP    : {'✅ Ya' if bep_done else '—'}"
+                                )
+                            else:
+                                msg = (
+                                    "❌ TRADE SELESAI — " + sym + "\n"
+                                    "========================\n"
+                                    f"Hasil  : {'SL (setelah BEP)' if bep_done else 'SL'}\n"
+                                    f"PnL    : -${abs(last_pnl):.2f} USDT"
+                                )
+                            loop = asyncio.new_event_loop()
+                            loop.run_until_complete(notify_fn(msg))
+                            loop.close()
+                        except Exception:
+                            pass
             except Exception as _e:
                 logger.debug(f"record_trade_result error: {_e}")
 
