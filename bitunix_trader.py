@@ -476,12 +476,9 @@ class BitunixTrader:
         self.set_leverage(symbol, self.leverage)
 
         # ── Tentukan order type ───────────────────────────────
-        current_price = self._get_current_price(sym)
-        use_market = (
-            entry == 0 or
-            current_price == 0 or
-            abs(entry - current_price) / max(current_price, 0.000001) < 0.002
-        )
+        # Selalu LIMIT di entry price — hindari slippage MARKET.
+        # Hanya MARKET kalau entry=0 (tidak ada level spesifik).
+        use_market = (entry == 0)
         order_type = "MARKET" if use_market else "LIMIT"
 
         # ── STEP 1: Open posisi utama dengan SL + TP2 ────────
