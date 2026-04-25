@@ -237,6 +237,13 @@ class TelegramBot:
                 logger.warning(f"BitunixTrader init error: {te}")
                 self.trader = None
         self.chat_ids       = set()
+        # Admin selalu masuk chat_ids agar dapat notif walau belum kirim /start
+        _admin_id = os.getenv('ADMIN_TELEGRAM_ID', '')
+        if _admin_id:
+            try:
+                self.chat_ids.add(int(_admin_id))
+            except ValueError:
+                pass
         self.app            = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
         self._daily_running = False
         self.tracker        = TradeTracker()
@@ -2369,6 +2376,32 @@ class TelegramBot:
             await self.app.initialize()
             await self.app.start()
             await self.app.updater.start_polling(drop_pending_updates=True)
+            # Notif startup ke admin
+            try:
+                from datetime import datetime
+                import os as _os
+                risk_usd  = _os.getenv('TRADE_RISK_USD', '?')
+                max_pos   = _os.getenv('TRADE_MAX_POSITIONS', '?')
+                trade_on  = _os.getenv('TRADE_ENABLED', 'false').lower() == 'true'
+                trade_str = "ON" if trade_on else "OFF"
+                now_str   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                msg = (
+                    "Bot ONLINE\n"
+                    "========================\n"
+                    f"Waktu   : {now_str}\n"
+                    f"Risk    : ${risk_usd} per trade\n"
+                    f"MaxPos  : {max_pos}\n"
+                    f"Trading : {trade_str}\n"
+                    "========================\n"
+                    "Auto scan aktif setiap 30 menit."
+                )
+                for cid in list(self.chat_ids):
+                    try:
+                        await self.app.bot.send_message(chat_id=cid, text=msg)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             # Keep running
             while True:
                 await asyncio.sleep(3600)
