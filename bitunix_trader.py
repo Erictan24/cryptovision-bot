@@ -1197,9 +1197,12 @@ class BitunixTrader:
                 elif isinstance(raw_h, list):
                     positions_h = raw_h
 
+                logger.info(f"📋 History raw {sym}: {str(raw_h)[:300]}")
                 if positions_h:
                     last_pos  = positions_h[0]
-                    last_pnl  = float(last_pos.get('pnl', last_pos.get('realizedPnl', 0)))
+                    logger.info(f"📋 History[0] {sym}: {last_pos}")
+                    last_pnl  = float(last_pos.get('pnl', last_pos.get('realizedPnl',
+                                last_pos.get('realisedPnl', last_pos.get('profit', 0)))))
                     # BEP close = last_pnl ≈ 0 tapi tp1 sudah kena → bukan pure loss
                     is_bep_close = bep_done and abs(last_pnl) < 0.01
                     trade_won = last_pnl > 0 or is_bep_close
