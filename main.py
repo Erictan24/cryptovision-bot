@@ -1,10 +1,19 @@
 import sys
 import io
+import os
 import logging
 import time
 import asyncio
 import threading
 from datetime import datetime, timedelta
+
+# Paksa timezone ke WIB (Asia/Jakarta UTC+7) agar log + notif konsisten
+# walau VPS di Singapore (UTC+8) atau UTC.
+os.environ['TZ'] = 'Asia/Jakarta'
+try:
+    time.tzset()  # Linux/Mac only
+except AttributeError:
+    pass  # Windows tidak support tzset
 
 # Paksa stdout UTF-8 agar emoji tidak error di terminal Windows
 if hasattr(sys.stdout, 'buffer'):
