@@ -255,6 +255,8 @@ def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
                         continue
 
                     if use_real:
+                        # Tag scalp di signal_data agar push ke web ber-strategy=scalp
+                        sig['_strategy'] = 'scalp'
                         # Eksekusi real ke Bitunix — MARKET order (entry=0)
                         try:
                             result = trader.place_order(

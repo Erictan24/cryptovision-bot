@@ -278,6 +278,13 @@ class TelegramBot:
             ("grant",     self.cmd_grant),
             ("reset_pnl", self.cmd_reset_pnl),
             ("scalp_stats", self.cmd_scalp_stats),
+            ("balance",   self.cmd_balance),
+            ("pause",     self.cmd_pause),
+            ("resume",    self.cmd_resume),
+            ("skip",      self.cmd_skip),
+            ("unskip",    self.cmd_unskip),
+            ("set_risk",  self.cmd_set_risk),
+            ("blocklist", self.cmd_blocklist),
         ]
         for name, handler in cmds:
             self.app.add_handler(CommandHandler(name, handler))
@@ -772,6 +779,163 @@ class TelegramBot:
                 )
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
+
+    # ==================================================================
+    # /balance — quick balance check
+    # ==================================================================
+    async def cmd_balance(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.trader or not self.trader.is_ready:
+            await update.message.reply_text("❌ Trader belum siap.")
+            return
+        try:
+            balance = self.trader.get_balance() or 0.0
+            positions = self.trader.get_positions()
+            await update.message.reply_text(
+                f"💰 BALANCE\n========================\n"
+                f"Available  : ${balance:.2f} USDT\n"
+                f"Open pos   : {len(positions)} posisi\n"
+                f"Risk/trade : ${self.trader.risk_usd:.2f}\n"
+                f"Trading    : {'ON' if self.trader.enabled else 'OFF'}"
+            )
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+
+    # ==================================================================
+    # /pause /resume — pause/resume auto trading
+    # ==================================================================
+    async def cmd_pause(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        admin_id = os.getenv('ADMIN_TELEGRAM_ID', '')
+        if str(update.effective_user.id) != admin_id:
+            await update.message.reply_text("❌ Hanya admin.")
+            return
+        if self.trader:
+            self.trader.enabled = False
+        await update.message.reply_text(
+            "⏸️ Auto trading PAUSED.\n"
+            "Bot tidak akan eksekusi order baru. Posisi terbuka tetap di-monitor."
+        )
+
+    async def cmd_resume(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        admin_id = os.getenv('ADMIN_TELEGRAM_ID', '')
+        if str(update.effective_user.id) != admin_id:
+            await update.message.reply_text("❌ Hanya admin.")
+            return
+        if self.trader:
+            self.trader.enabled = True
+        await update.message.reply_text("▶️ Auto trading RESUMED.")
+
+    # ==================================================================
+    # /skip /unskip /blocklist — block coin tertentu
+    # ==================================================================
+    async def cmd_skip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        admin_id = os.getenv('ADMIN_TELEGRAM_ID', '')
+        if str(update.effective_user.id) != admin_id:
+            await update.message.reply_text("❌ Hanya admin.")
+            return
+        if not context.args:
+            await update.message.reply_text("Usage: /skip BTC ETH SOL")
+            return
+        added = []
+        for coin in context.args:
+            sym = coin.upper().replace('USDT', '')
+            self._add_to_blocklist(sym)
+            added.append(sym)
+        await update.message.reply_text(
+            f"🚫 BLOCKED:\n{', '.join(added)}\n\n"
+            f"Bot tidak akan trade coin ini. Cek /blocklist."
+        )
+
+    async def cmd_unskip(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        admin_id = os.getenv('ADMIN_TELEGRAM_ID', '')
+        if str(update.effective_user.id) != admin_id:
+            await update.message.reply_text("❌ Hanya admin.")
+            return
+        if not context.args:
+            await update.message.reply_text("Usage: /unskip BTC ETH")
+            return
+        removed = []
+        for coin in context.args:
+            sym = coin.upper().replace('USDT', '')
+            if self._remove_from_blocklist(sym):
+                removed.append(sym)
+        await update.message.reply_text(
+            f"✅ UNBLOCKED:\n{', '.join(removed) if removed else '(none ditemukan)'}"
+        )
+
+    async def cmd_blocklist(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        coins = self._get_blocklist()
+        if not coins:
+            await update.message.reply_text("📋 Blocklist KOSONG. Bot trade semua coin.")
+            return
+        await update.message.reply_text(
+            f"📋 BLOCKLIST ({len(coins)} coin):\n{', '.join(sorted(coins))}\n\n"
+            f"Hapus dengan: /unskip COIN"
+        )
+
+    def _blocklist_path(self):
+        return 'data/coin_blocklist.json'
+
+    def _get_blocklist(self) -> set:
+        try:
+            import json, os as _os
+            path = self._blocklist_path()
+            if _os.path.exists(path):
+                with open(path) as f:
+                    return set(json.load(f))
+        except Exception:
+            pass
+        return set()
+
+    def _add_to_blocklist(self, sym: str):
+        bl = self._get_blocklist()
+        bl.add(sym.upper())
+        self._save_blocklist(bl)
+
+    def _remove_from_blocklist(self, sym: str) -> bool:
+        bl = self._get_blocklist()
+        if sym.upper() in bl:
+            bl.discard(sym.upper())
+            self._save_blocklist(bl)
+            return True
+        return False
+
+    def _save_blocklist(self, bl: set):
+        try:
+            import json, os as _os
+            _os.makedirs('data', exist_ok=True)
+            with open(self._blocklist_path(), 'w') as f:
+                json.dump(sorted(bl), f, indent=2)
+        except Exception as e:
+            logger.warning(f"Save blocklist gagal: {e}")
+
+    # ==================================================================
+    # /set_risk — change risk per trade on the fly
+    # ==================================================================
+    async def cmd_set_risk(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        admin_id = os.getenv('ADMIN_TELEGRAM_ID', '')
+        if str(update.effective_user.id) != admin_id:
+            await update.message.reply_text("❌ Hanya admin.")
+            return
+        if not context.args:
+            cur = self.trader.risk_usd if self.trader else 0
+            await update.message.reply_text(
+                f"Current risk: ${cur:.2f} per trade\n\n"
+                f"Set baru: /set_risk 0.5"
+            )
+            return
+        try:
+            new_risk = float(context.args[0])
+            if new_risk <= 0 or new_risk > 100:
+                await update.message.reply_text("❌ Risk harus 0 < x <= 100")
+                return
+            if self.trader:
+                self.trader.risk_usd = new_risk
+            await update.message.reply_text(
+                f"✅ Risk per trade: ${new_risk:.2f}\n"
+                f"⚠️ Note: ini hanya runtime. Update .env juga agar persist setelah restart."
+            )
+        except ValueError:
+            await update.message.reply_text(f"❌ '{context.args[0]}' bukan angka valid")
 
     # ==================================================================
     # /help

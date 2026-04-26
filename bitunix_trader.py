@@ -418,6 +418,19 @@ class BitunixTrader:
         if self.get_open_position(symbol):
             return {'ok': False, 'msg': f'Sudah ada posisi {sym} terbuka — skip'}
 
+        # Cek blocklist (dari /skip command)
+        try:
+            import json, os as _os
+            bl_path = 'data/coin_blocklist.json'
+            if _os.path.exists(bl_path):
+                with open(bl_path) as f:
+                    blocklist = set(json.load(f))
+                clean_check = symbol.upper().replace('USDT', '')
+                if clean_check in blocklist:
+                    return {'ok': False, 'msg': f'{clean_check} di-block (lihat /blocklist)'}
+        except Exception:
+            pass
+
         # Cek juga pending LIMIT order — penting saat bot restart,
         # limit yang belum trigger tidak muncul di get_positions
         if self.has_pending_order(symbol):
@@ -587,6 +600,26 @@ class BitunixTrader:
             'kill_count' : sig_kill_count,
             'level_used' : sig_level_used,
         })
+
+        # ── Push signal ke website (Neon DB) ──────────────────
+        try:
+            strategy = (signal_data or {}).get('_strategy', 'swing')
+            self._push_signal_to_web({
+                'symbol'    : clean_sym,
+                'direction' : direction,
+                'strategy'  : strategy,
+                'quality'   : sig_quality,
+                'score'     : sig_score,
+                'entry'     : entry,
+                'sl'        : sl,
+                'tp1'       : tp1,
+                'tp2'       : tp2,
+                'rr'        : (signal_data or {}).get('rr', 0),
+                'reasons'   : sig_reasons[:6],
+                'executed'  : True,
+            })
+        except Exception as _pe:
+            logger.debug(f"Push signal to web error: {_pe}")
 
         # ── Log ke learning engine ────────────────────────────
         # Catat kondisi sinyal saat entry untuk analisa pola nanti
@@ -1228,6 +1261,31 @@ class BitunixTrader:
                     )
                     logger.info(f"📊 Trade {sym} selesai — {'PROFIT' if last_pnl > 0 else ('BEP' if is_bep_close else 'LOSS')} ${last_pnl:.2f}")
 
+                    # Push closed trade ke Neon DB
+                    try:
+                        saved_data = self._saved_positions.get(symbol, {})
+                        outcome = "PROFIT" if last_pnl > 0 else ("BEP" if is_bep_close else "LOSS")
+                        risk_dist = abs(entry - saved_data.get('sl', entry)) or 1
+                        pnl_r = last_pnl / (risk_dist if risk_dist > 0 else 1)
+                        self._push_trade_to_web({
+                            'symbol'     : symbol,
+                            'direction'  : direction,
+                            'strategy'   : 'swing',
+                            'quality'    : saved_data.get('quality', 'GOOD'),
+                            'entry'      : entry,
+                            'exit_price' : current,
+                            'sl'         : saved_data.get('sl'),
+                            'tp1'        : saved_data.get('tp1'),
+                            'tp2'        : saved_data.get('tp2'),
+                            'pnl_usd'    : float(last_pnl),
+                            'pnl_r'      : float(pnl_r),
+                            'outcome'    : outcome,
+                            'bep_done'   : bool(bep_done),
+                            'opened_at'  : saved_data.get('opened_at'),
+                        })
+                    except Exception as _pe:
+                        logger.debug(f"Push trade to web error: {_pe}")
+
                     # Notif trade selesai
                     if notify_fn and callable(notify_fn):
                         try:
@@ -1634,6 +1692,34 @@ class BitunixTrader:
 
         except Exception as e:
             logger.debug(f"sync_daily_loss error: {e}")
+
+    def _push_signal_to_web(self, sig: dict) -> None:
+        """Push signal ke Neon DB via website API. Best-effort, fail-silent."""
+        try:
+            import requests as _req
+            import hmac as _hmac, hashlib as _hl
+            web_url   = os.getenv('WEB_URL', 'https://cryptovision-web.vercel.app')
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+            symbol    = sig.get('symbol', '')
+            secret    = _hmac.new(bot_token.encode(), symbol.encode(), _hl.sha256).hexdigest()
+            sig['secret'] = secret
+            _req.post(f"{web_url}/api/signals", json=sig, timeout=8)
+        except Exception:
+            pass
+
+    def _push_trade_to_web(self, trade: dict) -> None:
+        """Push closed trade ke Neon DB. Best-effort, fail-silent."""
+        try:
+            import requests as _req
+            import hmac as _hmac, hashlib as _hl
+            web_url   = os.getenv('WEB_URL', 'https://cryptovision-web.vercel.app')
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+            symbol    = trade.get('symbol', '')
+            secret    = _hmac.new(bot_token.encode(), symbol.encode(), _hl.sha256).hexdigest()
+            trade['secret'] = secret
+            _req.post(f"{web_url}/api/trades", json=trade, timeout=8)
+        except Exception:
+            pass
 
     def _build_trade_explainer(self, symbol: str, direction: str,
                                 entry: float, last_pnl: float, stage: str) -> str:
