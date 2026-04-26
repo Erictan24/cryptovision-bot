@@ -621,6 +621,29 @@ class BitunixTrader:
         except Exception as _pe:
             logger.debug(f"Push signal to web error: {_pe}")
 
+        # ── Push posisi ke web HANYA kalau MARKET (langsung running) ─
+        # LIMIT order: posisi belum terbuka, akan di-push dari _start_limit_entry_monitor
+        if order_type == "MARKET":
+            try:
+                strategy = (signal_data or {}).get('_strategy', 'swing')
+                self._push_position_to_web({
+                    'symbol'    : clean_sym,
+                    'direction' : direction,
+                    'strategy'  : strategy,
+                    'quality'   : sig_quality,
+                    'entry'     : entry,
+                    'sl'        : sl,
+                    'tp1'       : tp1,
+                    'tp2'       : tp2,
+                    'rr'        : (signal_data or {}).get('rr', 0),
+                    'qty'       : qty,
+                    'reasons'   : sig_reasons[:6],
+                })
+                # Signal langsung filled (MARKET order fills instan)
+                self._patch_signal_status(clean_sym, 'filled')
+            except Exception as _ppe:
+                logger.debug(f"Push position to web error: {_ppe}")
+
         # ── Log ke learning engine ────────────────────────────
         # Catat kondisi sinyal saat entry untuk analisa pola nanti
         try:
@@ -822,6 +845,28 @@ class BitunixTrader:
                                 tp1_order_id = r.get('data', {}).get('orderId', '')
                                 logger.info(f"✅ TP1 terpasang {sym} @ {tp1} (orderId={tp1_order_id})")
                                 tp1_placed = True
+
+                                # ── Push posisi ke web (limit fill = posisi running) ──
+                                try:
+                                    clean_sym = sym.replace('USDT', '')
+                                    saved     = self._saved_positions.get(clean_sym, {})
+                                    actual_entry_px = float(pos.get('avgOpenPrice', entry))
+                                    self._push_position_to_web({
+                                        'symbol'    : clean_sym,
+                                        'direction' : direction,
+                                        'strategy'  : saved.get('_strategy', 'swing'),
+                                        'quality'   : saved.get('quality'),
+                                        'entry'     : actual_entry_px,
+                                        'sl'        : sl,
+                                        'tp1'       : tp1,
+                                        'tp2'       : tp2,
+                                        'qty'       : saved.get('qty'),
+                                        'reasons'   : (saved.get('reasons') or [])[:6],
+                                    })
+                                    # Signal pending → filled
+                                    self._patch_signal_status(clean_sym, 'filled')
+                                except Exception as _ppe:
+                                    logger.debug(f"Push position (limit fill) error: {_ppe}")
 
                                 # Kirim notif ke Telegram
                                 if notify_fn:
@@ -1110,6 +1155,14 @@ class BitunixTrader:
                                 self._save_positions_to_file()
                             except Exception as _se:
                                 logger.debug(f"Save tp1_hit flag gagal: {_se}")
+                            # Patch state posisi di web — TP1 hit + BEP active
+                            try:
+                                clean_sym = sym.replace('USDT', '')
+                                self._patch_position_state(
+                                    clean_sym, tp1_hit=True, bep_active=True, sl=entry
+                                )
+                            except Exception as _pse:
+                                logger.debug(f"Patch position state error: {_pse}")
                         else:
                             bep_attempts = 0
                             logger.warning(f"⚠️ BEP gagal {sym}: {result.get('msg')} — retry berikutnya")
@@ -1283,6 +1336,9 @@ class BitunixTrader:
                             'bep_done'   : bool(bep_done),
                             'opened_at'  : saved_data.get('opened_at'),
                         })
+                        # Hapus posisi dari web (sudah closed) + patch signal status
+                        self._delete_position_from_web(symbol)
+                        self._patch_signal_status(symbol, 'closed')
                     except Exception as _pe:
                         logger.debug(f"Push trade to web error: {_pe}")
 
@@ -1718,6 +1774,56 @@ class BitunixTrader:
             secret    = _hmac.new(bot_token.encode(), symbol.encode(), _hl.sha256).hexdigest()
             trade['secret'] = secret
             _req.post(f"{web_url}/api/trades", json=trade, timeout=8)
+        except Exception:
+            pass
+
+    def _hmac_secret(self, symbol: str) -> str:
+        """Hitung HMAC secret untuk auth ke website API."""
+        import hmac as _hmac, hashlib as _hl
+        bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+        return _hmac.new(bot_token.encode(), symbol.encode(), _hl.sha256).hexdigest()
+
+    def _web_url(self) -> str:
+        return os.getenv('WEB_URL', 'https://cryptovision-web.vercel.app')
+
+    def _push_position_to_web(self, position: dict) -> None:
+        """Push posisi running ke Neon DB (saat limit fill / market open). Best-effort."""
+        try:
+            import requests as _req
+            symbol = position.get('symbol', '')
+            position['secret'] = self._hmac_secret(symbol)
+            _req.post(f"{self._web_url()}/api/positions", json=position, timeout=8)
+        except Exception:
+            pass
+
+    def _delete_position_from_web(self, symbol: str) -> None:
+        """Hapus posisi dari Neon DB (saat trade close). Best-effort."""
+        try:
+            import requests as _req
+            secret = self._hmac_secret(symbol)
+            _req.delete(
+                f"{self._web_url()}/api/positions",
+                params={"symbol": symbol, "secret": secret},
+                timeout=8,
+            )
+        except Exception:
+            pass
+
+    def _patch_position_state(self, symbol: str, **opts) -> None:
+        """Update state posisi (tp1_hit, bep_active, sl). Best-effort."""
+        try:
+            import requests as _req
+            body = {"symbol": symbol, "secret": self._hmac_secret(symbol), **opts}
+            _req.patch(f"{self._web_url()}/api/positions", json=body, timeout=8)
+        except Exception:
+            pass
+
+    def _patch_signal_status(self, symbol: str, status: str) -> None:
+        """Update status signal (pending → filled / closed / cancelled). Best-effort."""
+        try:
+            import requests as _req
+            body = {"symbol": symbol, "status": status, "secret": self._hmac_secret(symbol)}
+            _req.patch(f"{self._web_url()}/api/signals", json=body, timeout=8)
         except Exception:
             pass
 
