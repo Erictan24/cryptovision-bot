@@ -60,6 +60,9 @@ class CryptoSignalBot:
         # Start scalp paper trade scanner (15 menit interval)
         self._start_scalp_paper()
 
+        # Start daily digest jam 20:00 ke Telegram channel
+        self._start_evening_digest()
+
         try:
             while True:
                 time.sleep(1)
@@ -218,6 +221,68 @@ class CryptoSignalBot:
             logger.info("📊 Scalp live scan scheduler: 15 menit scan")
         except Exception as e:
             logger.error(f"Gagal start scalp paper: {e}", exc_info=True)
+
+    # ==================================================================
+    # EVENING DIGEST — kirim rekap harian jam 20:00 WIB
+    # ==================================================================
+    def _start_evening_digest(self):
+        """Kirim rekap trading hari ini ke channel Telegram jam 20:00."""
+        self._digest_sent_today = None
+
+        def digest_loop():
+            while True:
+                try:
+                    now = datetime.now()
+                    if (now.hour == 20 and now.minute < 5 and
+                        self._digest_sent_today != now.date()):
+
+                        self._digest_sent_today = now.date()
+                        logger.info("📊 Evening digest jam 20:00 — kirim rekap")
+
+                        if self.tg.trader and self.tg.trader.is_ready:
+                            summary = self.tg.trader.get_daily_summary()
+                            if summary.get('ok'):
+                                msg = self._format_evening_digest(summary, now)
+                                notify_fn = self.tg._make_notify_fn()
+                                self._trigger_async(notify_fn(msg))
+                            else:
+                                logger.warning("Daily summary gagal — skip digest")
+
+                except Exception as e:
+                    logger.error(f"Evening digest error: {e}")
+
+                time.sleep(60)
+
+        t = threading.Thread(target=digest_loop, daemon=True)
+        t.start()
+        logger.info("📊 Evening digest scheduler: jam 20:00 WIB")
+
+    def _format_evening_digest(self, s: dict, now) -> str:
+        date_str = now.strftime("%d %b %Y")
+        net      = s.get('net_pnl', 0)
+        net_ico  = "✅" if net > 0 else ("⚪" if net == 0 else "❌")
+
+        lines = [
+            f"📊 RECAP TRADING — {date_str}",
+            "=" * 28,
+            f"Trade  : {s.get('count',0)} ({s.get('wins',0)}W / {s.get('losses',0)}L)",
+            f"Win Rate: {s.get('win_rate',0)}%",
+            f"PnL    : {net_ico} ${net:+.2f} USDT",
+            f"  Profit: +${s.get('profit',0):.2f}",
+            f"  Loss  : -${s.get('loss',0):.2f}",
+        ]
+        best = s.get('best', {})
+        worst = s.get('worst', {})
+        if best.get('sym'):
+            lines.append(f"Top    : {best['sym']} {best['side']} +${best['pnl']:.2f}")
+        if worst.get('sym'):
+            lines.append(f"Worst  : {worst['sym']} {worst['side']} ${worst['pnl']:.2f}")
+        lines.append(f"Open   : {s.get('open_pos',0)} posisi aktif")
+        lines.append(f"Balance: ${s.get('balance',0):.2f}")
+        lines.append("")
+        lines.append("Bot trading 24/7 — sinyal otomatis berbasis swing & scalp")
+        lines.append("@CryptoVisionID")
+        return "\n".join(lines)
 
     def _trigger_async(self, coro):
         """Jalankan coroutine dari thread biasa."""

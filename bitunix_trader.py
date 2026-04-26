@@ -1197,12 +1197,12 @@ class BitunixTrader:
                 elif isinstance(raw_h, list):
                     positions_h = raw_h
 
-                logger.info(f"📋 History raw {sym}: {str(raw_h)[:300]}")
                 if positions_h:
                     last_pos  = positions_h[0]
-                    logger.info(f"📋 History[0] {sym}: {last_pos}")
-                    last_pnl  = float(last_pos.get('pnl', last_pos.get('realizedPnl',
-                                last_pos.get('realisedPnl', last_pos.get('profit', 0)))))
+                    # Bitunix pakai field 'realizedPNL' (uppercase PNL) — bukan camelCase
+                    last_pnl  = float(last_pos.get('realizedPNL',
+                                last_pos.get('realizedPnl',
+                                last_pos.get('pnl', 0))))
                     # BEP close = last_pnl ≈ 0 tapi tp1 sudah kena → bukan pure loss
                     is_bep_close = bep_done and abs(last_pnl) < 0.01
                     trade_won = last_pnl > 0 or is_bep_close
@@ -1607,6 +1607,82 @@ class BitunixTrader:
 
         except Exception as e:
             logger.debug(f"sync_daily_loss error: {e}")
+
+    def get_daily_summary(self) -> dict:
+        """
+        Return rekap trading hari ini untuk daily digest.
+        Period: sejak jam 8 pagi (sesuai _get_trade_date logic).
+        """
+        from datetime import datetime as dt, timedelta
+        try:
+            now = dt.now()
+            if now.hour < 8:
+                reset_time = (now - timedelta(days=1)).replace(hour=8, minute=0, second=0, microsecond=0)
+            else:
+                reset_time = now.replace(hour=8, minute=0, second=0, microsecond=0)
+            today_start = int(reset_time.timestamp() * 1000)
+
+            data = self._get("/api/v1/futures/position/get_history_positions", {
+                "startTime": str(today_start),
+                "limit"    : "100",
+            })
+            if data.get('code') != 0:
+                return {'ok': False}
+
+            raw = data.get('data', [])
+            if isinstance(raw, dict):
+                positions = raw.get('positionList', raw.get('list', []))
+            elif isinstance(raw, list):
+                positions = raw
+            else:
+                positions = []
+
+            wins, losses, total_profit, total_loss = 0, 0, 0.0, 0.0
+            best  = {'sym': '', 'pnl': 0.0, 'side': ''}
+            worst = {'sym': '', 'pnl': 0.0, 'side': ''}
+            count = 0
+            for pos in positions:
+                mtime = int(pos.get('mtime', 0))
+                if mtime > 0 and mtime < today_start:
+                    continue
+                pnl  = float(pos.get('realizedPNL', 0))
+                psym = pos.get('symbol', '').replace('USDT', '')
+                pside_raw = pos.get('side', '')
+                pside = 'LONG' if pside_raw in ('BUY', 'LONG') else 'SHORT'
+                count += 1
+                if pnl > 0:
+                    wins += 1
+                    total_profit += pnl
+                    if pnl > best['pnl']:
+                        best = {'sym': psym, 'pnl': pnl, 'side': pside}
+                elif pnl < 0:
+                    losses += 1
+                    total_loss += abs(pnl)
+                    if pnl < worst['pnl']:
+                        worst = {'sym': psym, 'pnl': pnl, 'side': pside}
+
+            net    = total_profit - total_loss
+            wr     = (wins / count * 100) if count > 0 else 0.0
+            open_n = len(self.get_positions())
+            balance = self.get_balance() or 0.0
+
+            return {
+                'ok'        : True,
+                'count'     : count,
+                'wins'      : wins,
+                'losses'    : losses,
+                'win_rate'  : round(wr, 1),
+                'profit'    : round(total_profit, 2),
+                'loss'      : round(total_loss, 2),
+                'net_pnl'   : round(net, 2),
+                'best'      : best,
+                'worst'     : worst,
+                'open_pos'  : open_n,
+                'balance'   : round(balance, 2),
+            }
+        except Exception as e:
+            logger.warning(f"get_daily_summary error: {e}")
+            return {'ok': False}
 
     def _update_daily_loss(self, loss_pct: float):
         """Update daily loss tracker. loss_pct dalam persen dari balance."""
