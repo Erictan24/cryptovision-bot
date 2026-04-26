@@ -275,6 +275,7 @@ class TelegramBot:
             ("learn",     self.cmd_learn),
             ("train",     self.cmd_train),
             ("verify",    self.cmd_verify),
+            ("grant",     self.cmd_grant),
             ("reset_pnl", self.cmd_reset_pnl),
             ("scalp_stats", self.cmd_scalp_stats),
         ]
@@ -670,6 +671,105 @@ class TelegramBot:
                     pass
             else:
                 await update.message.reply_text(f"❌ Gagal update order: {resp2.text}")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Error: {e}")
+
+    # ==================================================================
+    # /grant — admin manual grant subscription
+    # ==================================================================
+    async def cmd_grant(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Admin: kasih subscription manual ke user.
+        Usage: /grant <telegram_id> <plan>
+        Plan: m1 (1 Bulan), m3 (3 Bulan), y1 (1 Tahun), lt (Lifetime)
+        Contoh: /grant 1885958291 lt
+        """
+        admin_id = os.getenv('ADMIN_TELEGRAM_ID', '')
+        if str(update.effective_user.id) != admin_id:
+            await update.message.reply_text("❌ Hanya admin yang bisa grant.")
+            return
+
+        if not context.args or len(context.args) < 2:
+            await update.message.reply_text(
+                "Usage: /grant TELEGRAM_ID PLAN\n\n"
+                "PLAN options:\n"
+                "  m1 = 1 Bulan\n"
+                "  m3 = 3 Bulan\n"
+                "  y1 = 1 Tahun\n"
+                "  lt = Lifetime\n\n"
+                "Contoh: /grant 1885958291 lt"
+            )
+            return
+
+        target_id = context.args[0].strip()
+        plan      = context.args[1].strip().lower()
+        plan_map  = {
+            'm1': '1 Bulan',
+            'm3': '3 Bulan',
+            'y1': '1 Tahun',
+            'lt': 'Lifetime',
+        }
+        if plan not in plan_map:
+            await update.message.reply_text(
+                f"❌ Plan '{plan}' tidak valid. Pilih: m1 / m3 / y1 / lt"
+            )
+            return
+
+        try:
+            int(target_id)
+        except ValueError:
+            await update.message.reply_text(f"❌ Telegram ID '{target_id}' bukan angka valid")
+            return
+
+        plan_name = plan_map[plan]
+        admin_key = os.getenv('ADMIN_API_KEY', '')
+        web_url   = os.getenv('WEB_URL', 'https://cryptovision-web.vercel.app')
+
+        if not admin_key:
+            await update.message.reply_text(
+                "❌ ADMIN_API_KEY belum diset di .env / Vercel env vars.\n"
+                "Set dulu lalu restart bot."
+            )
+            return
+
+        import requests as _req
+        try:
+            resp = _req.post(
+                f"{web_url}/api/admin/grant",
+                json={
+                    'adminKey' : admin_key,
+                    'userId'   : int(target_id),
+                    'plan'     : plan,
+                    'planName' : plan_name,
+                    'userName' : f"User {target_id}",
+                },
+                timeout=15,
+            )
+            if resp.ok:
+                await update.message.reply_text(
+                    f"✅ GRANT BERHASIL\n"
+                    f"========================\n"
+                    f"User ID : {target_id}\n"
+                    f"Plan    : {plan_name} ({plan})\n\n"
+                    f"Subscription aktif di dashboard."
+                )
+                # Notify recipient (kalau bukan admin sendiri)
+                if str(target_id) != admin_id:
+                    try:
+                        await update.get_bot().send_message(
+                            chat_id=int(target_id),
+                            text=(
+                                f"🎉 SUBSCRIPTION DIAKTIFKAN!\n\n"
+                                f"Plan: {plan_name}\n"
+                                f"Status: Active\n\n"
+                                f"Buka dashboard: {web_url}/dashboard"
+                            ),
+                        )
+                    except Exception:
+                        pass
+            else:
+                await update.message.reply_text(
+                    f"❌ Grant gagal ({resp.status_code}): {resp.text[:200]}"
+                )
         except Exception as e:
             await update.message.reply_text(f"❌ Error: {e}")
 
