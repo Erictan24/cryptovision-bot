@@ -564,16 +564,28 @@ class BitunixTrader:
 
         # Simpan data posisi ke file untuk resume saat bot restart
         clean_sym = sym.replace('USDT', '')
+        # Simpan reasons & faktor signal untuk explainer saat trade selesai
+        sig_reasons    = (signal_data or {}).get('reasons', [])
+        sig_score      = (signal_data or {}).get('confluence_score', 0)
+        sig_quality    = (signal_data or {}).get('quality', quality)
+        sig_kill_count = (signal_data or {}).get('kill_count', 0)
+        sig_level_used = (signal_data or {}).get('level_used', '')
+
         self._save_position(clean_sym, {
-            'symbol'   : clean_sym,
-            'direction': direction,
-            'entry'    : entry,
-            'sl'       : sl,
-            'tp1'      : tp1,
-            'tp2'      : tp2,
-            'qty'      : qty,
-            'leverage' : self.leverage,
-            'opened_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'symbol'     : clean_sym,
+            'direction'  : direction,
+            'entry'      : entry,
+            'sl'         : sl,
+            'tp1'        : tp1,
+            'tp2'        : tp2,
+            'qty'        : qty,
+            'leverage'   : self.leverage,
+            'opened_at'  : time.strftime('%Y-%m-%d %H:%M:%S'),
+            'reasons'    : sig_reasons[:8],   # max 8 reason
+            'score'      : sig_score,
+            'quality'    : sig_quality,
+            'kill_count' : sig_kill_count,
+            'level_used' : sig_level_used,
         })
 
         # ── Log ke learning engine ────────────────────────────
@@ -1245,6 +1257,21 @@ class BitunixTrader:
                             loop = asyncio.new_event_loop()
                             loop.run_until_complete(notify_fn(msg))
                             loop.close()
+
+                            # Kirim explainer post (siap copy ke channel) jika trade WIN
+                            if last_pnl > 0:
+                                try:
+                                    explainer = self._build_trade_explainer(
+                                        symbol=symbol, direction=direction,
+                                        entry=entry, last_pnl=last_pnl,
+                                        stage="TP3+" if stage3_done else "TP2"
+                                    )
+                                    if explainer:
+                                        loop2 = asyncio.new_event_loop()
+                                        loop2.run_until_complete(notify_fn(explainer))
+                                        loop2.close()
+                                except Exception as _xe:
+                                    logger.debug(f"Explainer error: {_xe}")
                         except Exception as _ne:
                             logger.warning(f"Notif trade selesai {sym} gagal: {_ne}")
             except Exception as _e:
@@ -1607,6 +1634,62 @@ class BitunixTrader:
 
         except Exception as e:
             logger.debug(f"sync_daily_loss error: {e}")
+
+    def _build_trade_explainer(self, symbol: str, direction: str,
+                                entry: float, last_pnl: float, stage: str) -> str:
+        """
+        Generate post explainer ready-to-share untuk trade WIN.
+        Pakai signal data yang disimpan saat trade dibuka.
+        """
+        clean_sym = symbol.upper().replace('USDT', '')
+        saved = self._saved_positions.get(clean_sym, {})
+        reasons = saved.get('reasons', [])
+        score   = saved.get('score', 0)
+        quality = saved.get('quality', 'GOOD')
+        opened  = saved.get('opened_at', '')
+        tp1     = saved.get('tp1', 0)
+        tp2     = saved.get('tp2', 0)
+        sl      = saved.get('sl', 0)
+
+        try:
+            rr = abs(tp2 - entry) / abs(entry - sl) if abs(entry - sl) > 0 else 0
+        except Exception:
+            rr = 0
+
+        ico = "🟢" if direction == "LONG" else "🔴"
+        lines = [
+            f"📈 ANALISA TRADE {clean_sym} {direction} — HIT {stage}",
+            "=" * 32,
+            f"{ico} Entry : {entry:.6g}",
+            f"   SL    : {sl:.6g}",
+            f"   TP    : {tp2:.6g}",
+            f"   RR    : 1:{rr:.1f}",
+            f"   Profit: +${last_pnl:.2f} USDT",
+            "",
+            f"🎯 Quality: {quality} (score {score}/30+)",
+            "",
+            "💡 KENAPA SINYAL INI MUNCUL?",
+        ]
+        if reasons:
+            for i, r in enumerate(reasons[:6], 1):
+                # Bersihkan emoji + truncate
+                r_clean = str(r).strip()
+                if len(r_clean) > 90:
+                    r_clean = r_clean[:87] + "..."
+                lines.append(f"  {i}. {r_clean}")
+        else:
+            lines.append("  (data konfluensi tidak tersimpan)")
+
+        lines.extend([
+            "",
+            f"⏱️ Open: {opened}",
+            "",
+            "Bot trading 24/7 — analisis multi-faktor swing & scalp",
+            "Daftar bot trading otomatis: @CryptoVisionID",
+            "",
+            "#trading #crypto #bitunix #signal #cuan",
+        ])
+        return "\n".join(lines)
 
     def get_daily_summary(self) -> dict:
         """
