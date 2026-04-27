@@ -355,15 +355,18 @@ class BitunixTrader:
     # ── SET LEVERAGE ──────────────────────────────────────────
 
     def set_leverage(self, symbol: str, leverage: int) -> bool:
+        """Set leverage di Bitunix. Wajib include marginCoin USDT."""
         sym  = symbol.upper().replace('/USDT', '').replace('USDT', '') + 'USDT'
         data = self._post("/api/v1/futures/account/change_leverage", {
             "symbol"      : sym,
+            "marginCoin"  : "USDT",     # WAJIB — sebelumnya missing → Parameter error
             "leverage"    : str(leverage),
-            "marginType"  : "CROSS",    # Cross margin
         })
         ok = data.get('code') == 0
-        if not ok:
-            logger.warning(f"set_leverage {sym}x{leverage}: {data.get('msg')}")
+        if ok:
+            logger.info(f"✅ set_leverage {sym}x{leverage} OK")
+        else:
+            logger.warning(f"⚠️ set_leverage {sym}x{leverage}: {data.get('msg')}")
         return ok
 
     # ── PLACE ORDER ───────────────────────────────────────────
