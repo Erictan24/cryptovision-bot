@@ -71,7 +71,7 @@ DAILY_SIGNAL = {
     'minute'      : 0,
     'max_signals' : 10,   # Top 10 signal terbaik dari seluruh market
     'scan_delay'  : 2,    # Lebih cepat — Binance tidak perlu delay panjang
-    'min_quality' : 'GOOD',  # DIPERKETAT dari MODERATE → GOOD (hanya WR 59%+ yang ditrade)
+    'min_quality' : 'MODERATE',  # 2026-04-27: balikin ke MODERATE — match backtest fe64503 (244 trade/60d WR 60%). GOOD-only bikin volume drop drastis (rejection gate downgrade GOOD→MODERATE saat no Pin Bar).
 }
 
 # =============================================
