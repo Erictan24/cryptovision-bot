@@ -599,6 +599,8 @@ class BitunixTrader:
             'quality'    : sig_quality,
             'kill_count' : sig_kill_count,
             'level_used' : sig_level_used,
+            'rr'         : (signal_data or {}).get('rr', 0) or (signal_data or {}).get('rr2', 0),
+            '_strategy'  : (signal_data or {}).get('_strategy', 'swing'),
         })
 
         # ── Push signal ke website (Neon DB) ──────────────────
@@ -880,6 +882,7 @@ class BitunixTrader:
                                         'sl'        : sl,
                                         'tp1'       : tp1,
                                         'tp2'       : tp2,
+                                        'rr'        : saved.get('rr', 0),
                                         'qty'       : saved.get('qty'),
                                         'leverage'  : self.leverage,
                                         'reasons'   : (saved.get('reasons') or [])[:6],
