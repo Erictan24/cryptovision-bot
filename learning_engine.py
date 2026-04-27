@@ -443,10 +443,16 @@ class LearningEngine:
         if not patterns:
             return {}
 
+        # SAFETY: auto-tune di-disable secara default karena bisa over-fit ke
+        # data backtest yang invalid (misal ASIA WR=0% n=2287 dari backtest
+        # buggy → block semua signal Asia session = 0 signal 2 hari).
+        # Set AUTO_TUNE_ENABLED=true di .env untuk re-enable.
+        if os.getenv('AUTO_TUNE_ENABLED', 'false').lower() not in ('true', '1', 'yes'):
+            return {}
+
         # Minimum sample per pola sebelum auto-tune berani membuat keputusan.
-        # Sample kecil (< 30) tidak bisa diandalkan — bisa kebetulan semua loss
-        # karena kondisi pasar sementara, bukan karena faktornya memang buruk.
-        MIN_PATTERN_SAMPLE = 30
+        # NAIK dari 30 → 100 supaya tidak over-react ke noise sample kecil.
+        MIN_PATTERN_SAMPLE = 100
 
         # RSI threshold untuk LONG
         rsi_60_65 = patterns.get('rsi_long_60_65')
@@ -455,34 +461,21 @@ class LearningEngine:
             adjustments['rsi_near_overbought'] = 60
             notes.append(f"RSI 60-65 LONG WR={rsi_60_65['wr']:.0%} (n={rsi_60_65['total']}) -> turun threshold ke 60")
 
-        # Score threshold
-        s21 = patterns.get('score_21_22')
-        if (s21 and s21['wr'] < WR_BLOCK_THRESHOLD
-                and s21.get('total', 0) >= MIN_PATTERN_SAMPLE):
-            adjustments['score_good'] = 23
-            adjustments['score_moderate'] = 23
-            notes.append(f"Score 21-22 WR={s21['wr']:.0%} (n={s21['total']}) -> naikkan min score ke 23")
+        # Score threshold — DISABLED.
+        # Naik score min ke 23 = block almost all signals (default 17-20).
+        # Score 18-19 sweet spot per backtest 179 trades, JANGAN dipindah.
 
         # Kill factor — HATI-HATI: jangan sampai block semua signal
-        # Hanya naikkan max_kills_good ke 0 kalau sample cukup DAN WR benar-benar buruk
         k1 = patterns.get('kills_1')
         if (k1 and k1['wr'] < WR_BLOCK_THRESHOLD
                 and k1.get('total', 0) >= MIN_PATTERN_SAMPLE):
             adjustments['max_kills_good'] = 0
             notes.append(f"Kill=1 WR={k1['wr']:.0%} (n={k1['total']}) -> GOOD hanya boleh 0 kills")
 
-        # Session adjustment — hanya block kalau sample cukup banyak
-        asia = patterns.get('session_ASIA')
-        if (asia and asia['wr'] < WR_BLOCK_THRESHOLD
-                and asia.get('total', 0) >= MIN_PATTERN_SAMPLE):
-            adjustments['block_asia_session'] = True
-            notes.append(f"ASIA session WR={asia['wr']:.0%} (n={asia['total']}) -> block Asia session")
-
-        dead = patterns.get('session_DEAD')
-        if (dead and dead['wr'] < WR_BLOCK_THRESHOLD
-                and dead.get('total', 0) >= MIN_PATTERN_SAMPLE):
-            adjustments['block_dead_session'] = True
-            notes.append(f"DEAD session WR={dead['wr']:.0%} (n={dead['total']}) -> block Dead zone")
+        # Session adjustment — DISABLED.
+        # Block Asia/Dead session bikin bot diam ber-jam-jam = no signal di
+        # window favorit user (Asia = WIB pagi-siang). Kalau memang mau block,
+        # set explicit di config.py, jangan di learning yang bisa over-fit.
 
         # Simpan ke file
         if adjustments:
