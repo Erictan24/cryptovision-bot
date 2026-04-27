@@ -618,6 +618,25 @@ class BitunixTrader:
                 'reasons'   : sig_reasons[:6],
                 'executed'  : True,
             })
+
+            # Broadcast signal ke semua paid subscriber via Telegram
+            try:
+                ico   = "🟢" if direction == "LONG" else "🔴"
+                strat = (signal_data or {}).get('_strategy', 'swing').upper()
+                msg   = (
+                    f"📡 SIGNAL BARU — {strat}\n"
+                    f"{'=' * 28}\n"
+                    f"{ico} {clean_sym} {direction}\n"
+                    f"Entry  : {entry}\n"
+                    f"SL     : {sl}\n"
+                    f"TP1    : {tp1}\n"
+                    f"TP2    : {tp2}\n"
+                    f"Quality: {sig_quality}  Score: {sig_score}\n"
+                    f"\n👁️ Lihat detail di dashboard."
+                )
+                self._broadcast_to_subscribers(msg)
+            except Exception as _bce:
+                logger.debug(f"Broadcast subscribers error: {_bce}")
         except Exception as _pe:
             logger.debug(f"Push signal to web error: {_pe}")
 
@@ -1824,6 +1843,43 @@ class BitunixTrader:
             import requests as _req
             body = {"symbol": symbol, "status": status, "secret": self._hmac_secret(symbol)}
             _req.patch(f"{self._web_url()}/api/signals", json=body, timeout=8)
+        except Exception:
+            pass
+
+    def _fetch_active_subscriber_ids(self) -> list:
+        """Ambil list telegram_id user yang punya subscription aktif. Best-effort."""
+        try:
+            import requests as _req
+            import hmac as _hmac, hashlib as _hl
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+            secret = _hmac.new(bot_token.encode(), b"subscribers", _hl.sha256).hexdigest()
+            r = _req.get(
+                f"{self._web_url()}/api/subscribers",
+                params={"secret": secret},
+                timeout=8,
+            )
+            if r.status_code == 200:
+                data = r.json()
+                if data.get("ok"):
+                    return data.get("subscriber_ids", [])
+        except Exception:
+            pass
+        return []
+
+    def _broadcast_to_subscribers(self, text: str) -> None:
+        """Kirim Telegram message ke semua paid subscriber. Best-effort, fail-silent."""
+        try:
+            import requests as _req
+            ids = self._fetch_active_subscriber_ids()
+            if not ids:
+                return
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            for cid in ids:
+                try:
+                    _req.post(url, json={"chat_id": int(cid), "text": text}, timeout=8)
+                except Exception:
+                    pass
         except Exception:
             pass
 
