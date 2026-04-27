@@ -656,6 +656,7 @@ class BitunixTrader:
                     'tp2'       : tp2,
                     'rr'        : (signal_data or {}).get('rr', 0),
                     'qty'       : qty,
+                    'leverage'  : self.leverage,
                     'reasons'   : sig_reasons[:6],
                 })
                 # Signal langsung filled (MARKET order fills instan)
@@ -880,6 +881,7 @@ class BitunixTrader:
                                         'tp1'       : tp1,
                                         'tp2'       : tp2,
                                         'qty'       : saved.get('qty'),
+                                        'leverage'  : self.leverage,
                                         'reasons'   : (saved.get('reasons') or [])[:6],
                                     })
                                     # Signal pending → filled
