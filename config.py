@@ -366,7 +366,10 @@ SCALP_CONFIG = {
     'use_whitelist': True,
 
     # Auto trade
-    'auto_trade_min_quality': 'GOOD',
+    # 2026-04-29 VOLUME UPGRADE: GOOD→WAIT untuk scalp (dengan 0.5x risk dari
+    # quality multiplier di place_order). Backtest 60d/50coin: WAIT WR 61.9%
+    # EV +0.05R × 0.5x risk = profit kecil tapi positif. Volume 2x lipat.
+    'auto_trade_min_quality': 'WAIT',
     'auto_trade_enabled'    : False,  # FALSE = paper mode
 
     # Paper mode (Level 1 validation)

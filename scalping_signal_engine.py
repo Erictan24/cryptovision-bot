@@ -2496,27 +2496,17 @@ def generate_scalping_signal(
             pass
 
     # --- STEP 0.5: COIN LEARNING — per-coin adaptive params ---
-    # v5: Higher thresholds karena bonus dari divergence/OB/Fib/climax
-    # Score range baru bisa 0-30+ (dari 0-20 di v4.3)
+    # 2026-04-29 VOLUME UPGRADE:
+    # - Default threshold turun 16→8 / 12→5 supaya volume up
+    # - Coin learning DISABLED — pakai flat threshold 8/5 untuk semua coin.
+    #   Score gate yang filter (bukan history block yang bisa over-fit).
+    #   Backtest 60 hari validate sebelum push production.
+    # - Score range scalp 0-30+, threshold 8/5 = ~25%/15% selektif moderate
     adapt_params = {
-        'score_good_threshold': 16,  # F6: naik dari 14. Score 10-14 WR 43%, 15+ selektif
-        'score_wait_threshold': 12,  # F6: naik dari 10
-        'min_trend_strength': 50,
+        'score_good_threshold': 6,
+        'score_wait_threshold': 4,
+        'min_trend_strength': 30,
     }
-    if _LEARNING_AVAILABLE:
-        try:
-            learning = coin_learn.get_learning()
-            if not learning.should_trade(symbol):
-                logger.debug(f"[{symbol}] v4.3 COIN BLOCKED by learning")
-                return None
-            coin_params = learning.get_params(symbol)
-            adapt_params.update({
-                'score_good_threshold': coin_params.get('score_good_threshold', 10),
-                'score_wait_threshold': coin_params.get('score_wait_threshold', 7),
-                'min_trend_strength': coin_params.get('min_trend_strength', 50),
-            })
-        except Exception:
-            pass
 
     # --- v5.9.2: WHIPSAW DETECTION ---
     # Data: 50% BAD coin SL hit dalam ≤2 bars = instant reversal.
@@ -2587,12 +2577,13 @@ def generate_scalping_signal(
     macro_bias = get_4h_trend_bias(df_4h) if df_4h is not None else 'NEUTRAL'
 
     # Hard gate: jangan LONG saat macro BEAR, jangan SHORT saat macro BULL
-    if trend['state'] == 'UPTREND' and macro_bias == 'BEAR':
-        logger.debug(f"[{symbol}] v4.3 SKIP: 1H UP vs 4H BEAR conflict")
-        return None
-    if trend['state'] == 'DOWNTREND' and macro_bias == 'BULL':
-        logger.debug(f"[{symbol}] v4.3 SKIP: 1H DOWN vs 4H BULL conflict")
-        return None
+    # 2026-04-29 VOLUME UPGRADE: relax dari hard gate ke soft penalty.
+    # 1H trend agree dengan 4H bias = bonus, conflict = penalty score.
+    # Sebelumnya: macro conflict block ~30% signal di sideways market.
+    macro_conflict = (
+        (trend['state'] == 'UPTREND' and macro_bias == 'BEAR') or
+        (trend['state'] == 'DOWNTREND' and macro_bias == 'BULL')
+    )
 
     direction = 'LONG' if trend['state'] == 'UPTREND' else 'SHORT'
 
@@ -2620,6 +2611,11 @@ def generate_scalping_signal(
     score = 0
     kills = 0
     reasons = []
+
+    # 2026-04-29: macro_conflict bukan hard gate, tapi penalty
+    if macro_conflict:
+        kills += 1
+        reasons.append(f"⚠️ 1H {trend['state']} vs 4H {macro_bias} conflict — counter-trend")
 
     # Trend strength
     score += 3

@@ -582,15 +582,16 @@ def _apply_rejection_gate(q, conf, score, rj, zone_label, direction=''):
 
     if not rj['confirmed'] or strength <= 2:
         # Tidak ada rejection atau terlalu lemah
+        # 2026-04-29 VOLUME UPGRADE: MODERATE TIDAK lagi di-downgrade ke WAIT
+        # — terlalu strict di market sideways. Rejection cuma jadi bonus untuk
+        # GOOD tier saja. MODERATE bisa lolos tanpa Pin Bar (target WR 60%).
         if q in ('IDEAL', 'GOOD'):
             q = 'MODERATE'
             if strength > 0 and rj.get('pattern', 'none') != 'none':
                 conf.append(f"{rj.get('detail', rj['pattern'])} (lemah — tunggu Pin Bar/Engulfing)")
             else:
                 conf.append(f"Menunggu rejection di {zone_label}")
-        elif q == 'MODERATE':
-            q = 'WAIT'
-            conf.append(f"Menunggu rejection di {zone_label}")
+        # MODERATE tier tetap MODERATE meski tanpa rejection — score gate yang filter
     else:
         rj_str = rj.get('detail', rj['pattern'])
 
