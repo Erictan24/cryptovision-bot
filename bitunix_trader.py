@@ -1390,8 +1390,14 @@ class BitunixTrader:
                     try:
                         saved_data = self._saved_positions.get(symbol, {})
                         outcome = "PROFIT" if last_pnl > 0 else ("BEP" if is_bep_close else "LOSS")
-                        risk_dist = abs(entry - saved_data.get('sl', entry)) or 1
-                        pnl_r = last_pnl / (risk_dist if risk_dist > 0 else 1)
+                        # pnl_r = pnl_usd / risk_usd (multiple of risk).
+                        # risk_usd = qty × |entry - sl| (USD risked per trade).
+                        # Bug sebelumnya: bagi pakai risk_dist (price diff) → pnl_r melambung.
+                        sl_price = float(saved_data.get('sl') or entry)
+                        qty_pos  = float(saved_data.get('qty') or 0)
+                        risk_dist = abs(entry - sl_price)
+                        risk_usd  = qty_pos * risk_dist if (qty_pos > 0 and risk_dist > 0) else 0
+                        pnl_r = (last_pnl / risk_usd) if risk_usd > 0 else 0
                         self._push_trade_to_web({
                             'symbol'     : symbol,
                             'direction'  : direction,
