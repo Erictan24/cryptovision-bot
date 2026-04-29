@@ -1053,6 +1053,37 @@ class BitunixTrader:
                 self.start_tp1_monitor(sym, entry, tp1, direction, notify_fn=notify_fn)
                 resumed_filled += 1
 
+                # Re-push posisi ke web — recovery dari delete-bug race
+                # condition lama. Best-effort, tidak fatal kalau gagal.
+                try:
+                    clean_sym = sym.replace('USDT', '')
+                    saved_full = self._saved_positions.get(clean_sym, {})
+                    risk_dist = abs(entry - sl) if sl else 1
+                    reward2 = abs(saved_full.get('tp2', 0) - entry)
+                    rr = round(reward2 / risk_dist, 2) if risk_dist > 0 else 0
+                    self._push_position_to_web({
+                        'symbol'    : clean_sym,
+                        'direction' : direction,
+                        'strategy'  : saved_full.get('strategy', 'swing'),
+                        'quality'   : saved_full.get('quality', 'GOOD'),
+                        'entry'     : entry,
+                        'sl'        : entry if tp1_already_hit else sl,
+                        'tp1'       : tp1,
+                        'tp2'       : saved_full.get('tp2', 0),
+                        'rr'        : rr,
+                        'qty'       : qty,
+                        'leverage'  : saved_full.get('leverage', self.leverage),
+                        'reasons'   : ['Auto-restored saat resume monitor'],
+                    })
+                    if tp1_already_hit:
+                        clean_sym2 = sym.replace('USDT', '')
+                        self._patch_position_state(
+                            clean_sym2,
+                            tp1_hit=True, bep_active=True, sl=entry,
+                        )
+                except Exception as _re:
+                    logger.debug(f"Re-push posisi {sym} ke web gagal: {_re}")
+
             # ── STEP 2: Resume limit entry monitor untuk PENDING limit ──
             resumed_limit = 0
             filled_syms = {pos.get('symbol', '').upper() for pos in positions}
@@ -1138,8 +1169,22 @@ class BitunixTrader:
                 try:
                     pos = self.get_open_position(symbol)
                     if not pos:
-                        logger.info(f"👁️ Monitor {sym}: posisi sudah close — stop")
-                        break
+                        # Race condition guard: Bitunix API kadang sebentar
+                        # return empty (network glitch / rate limit). Recheck
+                        # 3x dengan delay sebelum confirm closed — biar tidak
+                        # premature delete posisi dari web (bug PIPPIN 27 Apr).
+                        confirmed_closed = True
+                        for _retry in range(3):
+                            time.sleep(5)
+                            recheck = self.get_open_position(symbol)
+                            if recheck:
+                                pos = recheck
+                                confirmed_closed = False
+                                logger.debug(f"👁️ {sym}: false-empty recovered (retry {_retry+1})")
+                                break
+                        if confirmed_closed:
+                            logger.info(f"👁️ Monitor {sym}: posisi sudah close (3x recheck) — stop")
+                            break
 
                     current = self._get_current_price(sym)
                     if current <= 0:
