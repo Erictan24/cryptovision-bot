@@ -15,6 +15,10 @@ v5.9 — Forensic-driven upgrade dari data 43 trades v5.8:
     - Fix 12: Whipsaw 3/5->4/5 (hanya block very choppy)
     - Fix 13: Session DEAD: hard block->soft penalty -3 score
     - Fix 14: Confirmation body 40%->30%
+  v5.9.4 (5m TF support + F9 block list):
+    - Fix 15: Whipsaw TF-aware — 5m pakai 20% threshold + 5/5 (vs 30%/4/5 untuk 15m)
+    - Fix 16: F9 block — 11 bad coin dibuang dari whitelist (WR negatif dari backtest)
+    - Add: tf parameter ke generate_scalping_signal, support 5m live scan
 """
 
 import numpy as np
@@ -2421,6 +2425,7 @@ def generate_scalping_signal(
     symbol: str = '',
     adx: float = 20.0,
     signal_cache: dict = None,
+    tf: str = '15m',
 ) -> dict:
     """
     V3 — Trend-following dengan pullback entry.
@@ -2531,7 +2536,10 @@ def generate_scalping_signal(
     # Data: 50% BAD coin SL hit dalam ≤2 bars = instant reversal.
     # Root cause: 15m candles punya wick besar dua arah (whipsaw).
     # Filter: cek 5 candle terakhir. Jika >60% punya wick > body = choppy market.
+    # 5m TF: candle kecil natural, threshold 20% dan require 5/5 (lebih longgar).
     if len(df_main) >= 7:
+        body_threshold = 0.20 if tf == '5m' else 0.30
+        whipsaw_limit  = 5    if tf == '5m' else 4
         whipsaw_count = 0
         for idx in range(-5, 0):
             c_open = float(df_main['open'].iloc[idx])
@@ -2540,14 +2548,11 @@ def generate_scalping_signal(
             c_close = float(df_main['close'].iloc[idx])
             body = abs(c_close - c_open)
             total_range = c_high - c_low
-            if total_range > 0 and body / total_range < 0.3:
+            if total_range > 0 and body / total_range < body_threshold:
                 whipsaw_count += 1
-        # v5.9.3: 3/5 → 4/5 (longgarkan). Data: whipsaw block 5312 signals (12%).
-        # 3/5 terlalu agresif — banyak momen valid terbuang.
-        # 4/5 = hanya block saat BENAR-BENAR choppy.
-        if whipsaw_count >= 4:  # 4+ dari 5 candle = very choppy
+        if whipsaw_count >= whipsaw_limit:
             logger.debug(f"[{symbol}] v5.9.3 SKIP: whipsaw detected "
-                         f"({whipsaw_count}/5 candles have body < 30% range)")
+                         f"({whipsaw_count}/5 candles have body < {int(body_threshold*100)}% range)")
             return None
 
     # --- STEP 1: DETECT TREND (v4: pakai 1H HTF!) ---

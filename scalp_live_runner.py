@@ -23,7 +23,9 @@ logger = logging.getLogger(__name__)
 # ── Config ──────────────────────────────────────────────────
 SCALP_SCAN_INTERVAL = 900      # 15 menit
 MONITOR_INTERVAL    = 300      # 5 menit
-DEDUP_HOURS         = 4        # anti dobel signal per coin+direction
+DEDUP_HOURS_15M     = 4        # anti dobel signal per coin+direction (15m)
+DEDUP_HOURS_5M      = 1.5      # dedup 5m lebih pendek (proporsional)
+DEDUP_HOURS         = 4        # backward compat
 
 
 def _fetch_binance_klines(symbol: str, interval: str, limit: int = 200):
@@ -68,35 +70,37 @@ def _get_current_price(symbol: str) -> Optional[float]:
     return None
 
 
-def _scan_coin(symbol: str) -> Optional[dict]:
+def _scan_coin(symbol: str, tf: str = '15m') -> Optional[dict]:
     """
-    Scan 1 coin, return scalp signal dict atau None.
+    Scan 1 coin pada TF tertentu, return scalp signal dict atau None.
+    tf: '15m' (default) atau '5m'
     """
-    from scalping_signal_engine import generate_scalping_signal
+    from scalping_signal_engine import generate_scalping_signal, get_htf_bias
     from indicators import calc_atr, calc_rsi, calc_adx, analyze_ema_trend
 
+    # Limit candles per TF (5m butuh lebih banyak untuk coverage yang sama)
+    limit_map = {'15m': 200, '5m': 500}
+    limit = limit_map.get(tf, 200)
+
     try:
-        df_15m = _fetch_binance_klines(symbol, '15m', 200)
-        df_1h  = _fetch_binance_klines(symbol, '1h', 100)
-        if df_15m is None or len(df_15m) < 80:
-            logger.debug(f"scalp {symbol}: 15m data kurang")
+        df_main = _fetch_binance_klines(symbol, tf, limit)
+        df_1h   = _fetch_binance_klines(symbol, '1h', 100)
+        if df_main is None or len(df_main) < 80:
+            logger.debug(f"scalp {symbol} {tf}: data kurang")
             return None
         if df_1h is None or len(df_1h) < 55:
             logger.debug(f"scalp {symbol}: 1h data kurang")
             return None
 
-        # Indicators dari 15m
-        atr_s = calc_atr(df_15m, 14)
+        atr_s = calc_atr(df_main, 14)
         atr   = float(atr_s.iloc[-1]) if atr_s is not None else 0
         if atr <= 0:
             return None
-        rsi_val = float(calc_rsi(df_15m, 14).iloc[-1])
-        adx_val = calc_adx(df_15m, 14)
-        ema_trend, _, _ = analyze_ema_trend(df_15m)
-        price = float(df_15m['close'].iloc[-1])
+        rsi_val   = float(calc_rsi(df_main, 14).iloc[-1])
+        adx_val   = calc_adx(df_main, 14)
+        ema_trend, _, _ = analyze_ema_trend(df_main)
+        price     = float(df_main['close'].iloc[-1])
 
-        # HTF bias dari 1h
-        from scalping_signal_engine import get_htf_bias
         htf_bias = get_htf_bias(df_1h)
         htf_map  = {'BULLISH': 'UP', 'BEARISH': 'DOWN', 'SIDEWAYS': 'SIDEWAYS'}
         htf_ema  = htf_map.get(htf_bias, 'SIDEWAYS')
@@ -107,16 +111,18 @@ def _scan_coin(symbol: str) -> Optional[dict]:
             ks=None, kr=None, res_mtf=[], sup_mtf=[],
             smc={'df_1h': df_1h},
             rsi=rsi_val, htf_ema=htf_ema,
-            df_main=df_15m, symbol=symbol,
+            df_main=df_main, symbol=symbol,
             adx=adx_val, signal_cache=None,
+            tf=tf,
         )
         if signal:
             signal['_symbol'] = symbol
             signal['symbol']  = symbol
+            signal['_tf']     = tf
         return signal
 
     except Exception as e:
-        logger.debug(f"scan {symbol} error: {e}")
+        logger.debug(f"scan {symbol} {tf} error: {e}")
         return None
 
 
@@ -233,8 +239,12 @@ def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
     # ── Scan loop (generate signal) ──────────────────────
     def scan_loop():
         time.sleep(120)  # grace period setelah bot start
-        logger.info("⚡ Scalp scan dimulai (15 menit interval)")
+        logger.info("⚡ Scalp scan dimulai (15 menit interval, TF: 15m + 5m)")
         scan_count = 0
+        # Dedup terpisah per TF: {coin_direction: last_signal_time}
+        last_signal_15m: dict = {}
+        last_signal_5m:  dict = {}
+
         while True:
             try:
                 scan_count += 1
@@ -242,57 +252,76 @@ def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
                 signals_found = 0
                 scan_errors  = 0
                 t_start = time.time()
-                logger.info(f"📡 Scalp scan #{scan_count}: {len(coins)} coins")
+                now = datetime.utcnow()
+                logger.info(f"📡 Scalp scan #{scan_count}: {len(coins)} coins (15m+5m)")
 
                 for coin in coins:
-                    try:
-                        sig = _scan_coin(coin)
-                    except Exception as e:
-                        scan_errors += 1
-                        logger.warning(f"Scalp scan {coin} error: {e}")
-                        continue
-                    if sig is None:
-                        continue
-
-                    if use_real:
-                        # Tag scalp di signal_data agar push ke web ber-strategy=scalp
-                        sig['_strategy'] = 'scalp'
-                        # Eksekusi real ke Bitunix — MARKET order (entry=0)
+                    # ── scan per TF ──
+                    for tf, dedup_dict, dedup_h in [
+                        ('15m', last_signal_15m, DEDUP_HOURS_15M),
+                        ('5m',  last_signal_5m,  DEDUP_HOURS_5M),
+                    ]:
                         try:
-                            result = trader.place_order(
-                                symbol=coin,
-                                direction=sig.get('direction', 'LONG'),
-                                entry=0,  # MARKET order — scalp butuh eksekusi cepat
-                                sl=sig.get('sl', 0),
-                                tp1=sig.get('tp1', 0),
-                                tp2=sig.get('tp2', 0),
-                                quality=sig.get('quality', 'GOOD'),
-                                signal_data=sig,
-                                notify_fn=notify_fn,
-                            )
-                            if result and result.get('ok'):
-                                signals_found += 1
-                                logger.info(f"✅ Scalp real #{signals_found}: {coin} {sig.get('direction')}")
-                                _send_signal_notif(notify_fn, sig, real_trade=True)
-                                # Start TP1 monitor
-                                trader.start_tp1_monitor(
+                            sig = _scan_coin(coin, tf=tf)
+                        except Exception as e:
+                            scan_errors += 1
+                            logger.warning(f"Scalp scan {coin} {tf} error: {e}")
+                            continue
+                        if sig is None:
+                            continue
+
+                        direction = sig.get('direction', 'LONG')
+                        dedup_key = f"{coin}_{direction}"
+                        last_ts = dedup_dict.get(dedup_key)
+                        if last_ts:
+                            hours_since = (now - last_ts).total_seconds() / 3600
+                            if hours_since < dedup_h:
+                                logger.debug(
+                                    f"[{coin}] {tf} dedup skip "
+                                    f"({hours_since:.1f}h < {dedup_h}h)")
+                                continue
+                        dedup_dict[dedup_key] = now
+
+                        sig['_strategy'] = f'scalp_{tf}'
+                        if use_real:
+                            try:
+                                result = trader.place_order(
                                     symbol=coin,
-                                    entry=sig.get('entry', 0),
+                                    direction=direction,
+                                    entry=0,
+                                    sl=sig.get('sl', 0),
                                     tp1=sig.get('tp1', 0),
-                                    direction=sig.get('direction', 'LONG'),
+                                    tp2=sig.get('tp2', 0),
+                                    quality=sig.get('quality', 'GOOD'),
+                                    signal_data=sig,
                                     notify_fn=notify_fn,
                                 )
-                            else:
-                                msg = result.get('msg', '') if result else 'gagal'
-                                logger.info(f"⚠️ Scalp order skip {coin}: {msg}")
-                        except Exception as e:
-                            logger.warning(f"Scalp real order {coin} error: {e}")
-                    else:
-                        trade_id = pt.open_paper_trade(sig)
-                        if trade_id:
-                            signals_found += 1
-                            logger.info(f"📊 Paper signal #{trade_id}: {coin} {sig.get('direction')}")
-                            _send_signal_notif(notify_fn, sig, real_trade=False)
+                                if result and result.get('ok'):
+                                    signals_found += 1
+                                    logger.info(
+                                        f"✅ Scalp {tf} real #{signals_found}: "
+                                        f"{coin} {direction}")
+                                    _send_signal_notif(notify_fn, sig, real_trade=True)
+                                    trader.start_tp1_monitor(
+                                        symbol=coin,
+                                        entry=sig.get('entry', 0),
+                                        tp1=sig.get('tp1', 0),
+                                        direction=direction,
+                                        notify_fn=notify_fn,
+                                    )
+                                else:
+                                    msg = result.get('msg', '') if result else 'gagal'
+                                    logger.info(f"⚠️ Scalp {tf} skip {coin}: {msg}")
+                            except Exception as e:
+                                logger.warning(f"Scalp {tf} order {coin} error: {e}")
+                        else:
+                            trade_id = pt.open_paper_trade(sig)
+                            if trade_id:
+                                signals_found += 1
+                                logger.info(
+                                    f"📊 Paper {tf} #{trade_id}: "
+                                    f"{coin} {direction}")
+                                _send_signal_notif(notify_fn, sig, real_trade=False)
 
                     time.sleep(0.3)  # rate limit buffer
 
