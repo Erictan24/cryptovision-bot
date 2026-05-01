@@ -538,11 +538,9 @@ def _determine_quality(score, n_kills):
     else:
         return None
 
-    # max_kills_good = 0: GOOD wajib bersih, 1 kill langsung turun MODERATE
-    # max_kills_moderate = 1: MODERATE toleransi 1 kill, 2 kills = reject
+    # Downgrade IDEAL→GOOD kalau ada 1 kill; hard reject kalau >= 2 kills
     if n_kills == 1 and q == 'IDEAL':   q = 'GOOD'
-    elif n_kills == 1 and q == 'GOOD':  q = 'MODERATE'  # downgrade, meski max_kills_good=0 sudah cegah ini
-    elif n_kills >= 2:                  return None      # safety net — sudah dicegah di max_kills_hard_reject
+    elif n_kills >= 2:                  return None
     return q
 
 
