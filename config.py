@@ -365,6 +365,18 @@ SCALP_CONFIG = {
     ],
     'use_whitelist': True,
 
+    # 5m TF block list — coin dengan WR/EV jelek di 5m TF
+    # Berdasarkan backtest 5m baseline (60d, 100coin): coin di list ini
+    # punya WR < 50% atau EV negatif signifikan. Skip 5m signal untuk
+    # coin ini, tapi 15m tetap allow (coin di-bawah masih OK di 15m).
+    # NOTE: ZEC + DOGE + ARB tidak di-block walaupun auto-tune ngeBLOCK
+    #       (mereka sebenarnya profitable di 5m, lihat data di
+    #        feedback_signal_sl_observations.md).
+    'scalp_5m_block_coins': [
+        'AVAX', 'SUI', 'SEI', 'XRP', 'SOL', 'LINK',
+        'LTC', 'BCH', 'BLUR', 'LDO', 'TRX',
+    ],
+
     # Auto trade
     # 2026-04-29 VOLUME UPGRADE: GOOD→WAIT untuk scalp (dengan 0.5x risk dari
     # quality multiplier di place_order). Backtest 60d/50coin: WAIT WR 61.9%

@@ -2447,18 +2447,24 @@ def generate_scalping_signal(
     #
     # Strategi: WHITELIST approach — hanya trade coin yang terbukti profitable.
     # List ini bisa di-expand setelah coin baru lolos backtest.
+    #
+    # F9 block (2026-05-01) — hapus 11 coin EV negatif dari 60d/100coin backtest:
+    #   AVAX(-4.05R,43%WR), BCH(-4.73R,43%WR), BLUR(-4.24R,33%WR),
+    #   LDO(-4.14R,47%WR), LINK(-0.81R,52%WR), LTC(-1.45R,45%WR),
+    #   SEI(-2.56R,54%WR), SOL(-2.90R,52%WR), SUI(-1.94R,58%WR),
+    #   TRX(-0.55R,55%WR), XRP(-4.12R,49%WR)
+    #   Dampak: 610→342 trade, WR 57.4%→63.7%, EV +0.079R→+0.233R
     SCALP_COIN_WHITELIST = {
-        # Tier 1: Top scalp performers (WR 75-100%, PnL > +1.5R)
-        'BTC', 'DOGE', 'APT', 'AVAX', 'DOT', 'XRP', 'WLD', 'ZEC',
-        'LINA', 'WAVES',
-        # Tier 2: Solid scalp performers (WR 50-100%, PnL > +0.5R)
-        'BNB', 'ARB', 'CRV', 'ENJ', 'BIO', 'TRUMP', 'BLUR', 'OCEAN',
-        'DGB', 'STRAX', 'LDO', 'WLFI',
-        # Tier 3: Neutral scalp (WR >= 50%)
-        'LTC', 'SOL', 'SUI', 'SEI', 'ORDI', 'LINK',
-        # v5.9.4: Expanded — validated in SCALP backtest (PnL > 0)
-        # Dropped: AAVE(-3.2R), INJ(-2R), ARKM, ALPHA, MBOX, NEAR, WIF
-        'ADA', 'ETH', 'ENA', 'TAO', 'BCH', 'BNX', 'PAXG', 'TRX',
+        # Tier 1: Top performers (WR 65%+, EV >0.3R) — backtest validated
+        'BTC', 'ETH', 'WLD', 'TRUMP', 'TAO', 'ORDI',
+        # Tier 2: Solid performers (WR 58-65%, EV >0.1R)
+        'DOGE', 'APT', 'CRV', 'BNB', 'DOT', 'ADA',
+        # Tier 3: Borderline positive (EV >0, belum optimal)
+        'ARB', 'ZEC',
+        # Belum backtest (liquid, bisa di-test nanti): LINA, WAVES, ENJ, BIO,
+        # OCEAN, DGB, STRAX, WLFI, ENA, BNX, PAXG
+        'LINA', 'WAVES', 'ENJ', 'BIO', 'OCEAN', 'DGB', 'STRAX', 'WLFI',
+        'ENA', 'BNX', 'PAXG',
     }
     if symbol and symbol.upper().replace('USDT', '') not in SCALP_COIN_WHITELIST:
         # Strip USDT suffix jika ada
@@ -2508,6 +2514,19 @@ def generate_scalping_signal(
         'min_trend_strength': 30,
     }
 
+    # --- 2026-04-30 PATH B: TIGHTEN 5m FILTER ---
+    # Env var TIGHTEN_5M=1 aktivkan filter lebih ketat untuk 5m TF:
+    # - Score threshold 8/6 (sekarang 6/4) → +33% selektif
+    # - min_trend_strength 50 (sekarang 30) → trend wajib lebih kuat
+    # - ADX 1H minimum check di STEP berikutnya
+    # - Volume confirmation kill kalau ratio < 1.5
+    import os as _os
+    _tighten_5m = _os.getenv('TIGHTEN_5M', '0') == '1'
+    if _tighten_5m:
+        adapt_params['score_good_threshold'] = 8
+        adapt_params['score_wait_threshold'] = 6
+        adapt_params['min_trend_strength'] = 50
+
     # --- v5.9.2: WHIPSAW DETECTION ---
     # Data: 50% BAD coin SL hit dalam ≤2 bars = instant reversal.
     # Root cause: 15m candles punya wick besar dua arah (whipsaw).
@@ -2544,8 +2563,10 @@ def generate_scalping_signal(
 
     # v5.9.3: ADX min 22→18. Data: ADX 18-21 = 20% sinyal diblock,
     # trend masih valid di 15m scalping (beda dari swing yang butuh ADX kuat).
-    if adx_1h < 18:
-        logger.debug(f"[{symbol}] v4.3 SKIP: 1H ADX {adx_1h:.0f} < 18")
+    # 2026-04-30 PATH B: TIGHTEN_5M=1 → naikkan ADX min ke 25 (block range market)
+    _adx_min = 25 if _tighten_5m else 18
+    if adx_1h < _adx_min:
+        logger.debug(f"[{symbol}] SKIP: 1H ADX {adx_1h:.0f} < {_adx_min}")
         return None
 
     # v5.9.3: ADX death zone 35-44 → 40-44 (narrowed).
@@ -2595,9 +2616,9 @@ def generate_scalping_signal(
                      f"(trend={trend['state']}, RSI={rsi_data['rsi']:.0f})")
         return None
 
-    if pullback['quality'] == 'BROKEN':
-        logger.debug(f"[{symbol}] v3 SKIP: pullback too deep (broken)")
-        return None
+    # 2026-04-29 VOLUME UPGRADE: pullback BROKEN tidak hard reject lagi.
+    # Akan ditambah kill di score builder kalau BROKEN — biarkan score gate filter.
+    pullback_broken = pullback['quality'] == 'BROKEN'
 
     # --- STEP 3: DETECT CONTINUATION TRIGGER ---
     trigger = detect_continuation_trigger(df_main, trend['state'],
@@ -2616,6 +2637,11 @@ def generate_scalping_signal(
     if macro_conflict:
         kills += 1
         reasons.append(f"⚠️ 1H {trend['state']} vs 4H {macro_bias} conflict — counter-trend")
+
+    # 2026-04-29: pullback BROKEN → kill (bukan reject)
+    if pullback_broken:
+        kills += 1
+        reasons.append(f"⚠️ Pullback too deep (broken) — risky entry")
 
     # Trend strength
     score += 3
@@ -2650,6 +2676,11 @@ def generate_scalping_signal(
     elif vol['dead']:
         kills += 1
         reasons.append("KILL: Volume mati")
+
+    # 2026-04-30 PATH B: TIGHTEN_5M=1 → wajib volume confirm (kill kalau < 1.5x)
+    if _tighten_5m and vol['ratio'] < 1.5:
+        kills += 1
+        reasons.append(f"KILL: Volume rendah {vol['ratio']:.1f}x (TIGHTEN_5M)")
 
     # --- BONUS: Rejection wick (di direction of trend continuation) ---
     # F5: Extreme wick = TRAP, bukan confirmation.

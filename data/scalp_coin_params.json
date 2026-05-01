@@ -1,0 +1,537 @@
+{
+  "BTC": {
+    "params": {
+      "score_good_threshold": 8,
+      "score_wait_threshold": 6,
+      "min_trend_strength": 40,
+      "allow_trading": true,
+      "confidence": "HIGH",
+      "reason": "WR 72%, EV +0.33R",
+      "form_warning": false
+    },
+    "stats": {
+      "n_trades": 46,
+      "wr": 71.73913043478261,
+      "ev_r": 0.3316086956521739,
+      "total_pnl_r": 15.254,
+      "long_wr": 77.77777777777779,
+      "short_wr": 67.85714285714286,
+      "avg_score": 13.934782608695652,
+      "last_10_wr": 80.0
+    },
+    "last_updated": null
+  },
+  "ETH": {
+    "params": {
+      "score_good_threshold": 8,
+      "score_wait_threshold": 6,
+      "min_trend_strength": 40,
+      "allow_trading": true,
+      "confidence": "HIGH",
+      "reason": "WR 62%, EV +0.21R",
+      "form_warning": false
+    },
+    "stats": {
+      "n_trades": 53,
+      "wr": 62.264150943396224,
+      "ev_r": 0.20662264150943396,
+      "total_pnl_r": 10.951,
+      "long_wr": 69.23076923076923,
+      "short_wr": 55.55555555555556,
+      "avg_score": 13.528301886792454,
+      "last_10_wr": 60.0
+    },
+    "last_updated": null
+  },
+  "XRP": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV marginal (0.03R)"
+    },
+    "stats": {
+      "n_trades": 34,
+      "wr": 50.0,
+      "ev_r": 0.03279411764705882,
+      "total_pnl_r": 1.115,
+      "long_wr": 54.54545454545454,
+      "short_wr": 47.82608695652174,
+      "avg_score": 14.117647058823529,
+      "last_10_wr": 50.0
+    },
+    "last_updated": null
+  },
+  "SOL": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV negative (-0.05R)"
+    },
+    "stats": {
+      "n_trades": 36,
+      "wr": 55.55555555555556,
+      "ev_r": -0.050638888888888886,
+      "total_pnl_r": -1.823,
+      "long_wr": 50.0,
+      "short_wr": 60.0,
+      "avg_score": 13.583333333333334,
+      "last_10_wr": 50.0
+    },
+    "last_updated": null
+  },
+  "BNB": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV negative (-0.03R)"
+    },
+    "stats": {
+      "n_trades": 27,
+      "wr": 59.25925925925925,
+      "ev_r": -0.028074074074074074,
+      "total_pnl_r": -0.758,
+      "long_wr": 78.57142857142857,
+      "short_wr": 38.46153846153847,
+      "avg_score": 13.407407407407407,
+      "last_10_wr": 70.0
+    },
+    "last_updated": null
+  },
+  "DOGE": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV negative (-0.05R)"
+    },
+    "stats": {
+      "n_trades": 18,
+      "wr": 61.111111111111114,
+      "ev_r": -0.0505,
+      "total_pnl_r": -0.909,
+      "long_wr": 55.55555555555556,
+      "short_wr": 66.66666666666666,
+      "avg_score": 13.944444444444445,
+      "last_10_wr": 60.0
+    },
+    "last_updated": null
+  },
+  "ADA": {
+    "params": {
+      "score_good_threshold": 8,
+      "score_wait_threshold": 6,
+      "min_trend_strength": 40,
+      "allow_trading": true,
+      "confidence": "HIGH",
+      "reason": "WR 60%, EV +0.12R",
+      "form_warning": false
+    },
+    "stats": {
+      "n_trades": 20,
+      "wr": 60.0,
+      "ev_r": 0.11810000000000001,
+      "total_pnl_r": 2.362,
+      "long_wr": 40.0,
+      "short_wr": 80.0,
+      "avg_score": 13.35,
+      "last_10_wr": 50.0
+    },
+    "last_updated": null
+  },
+  "TRX": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV negative (-0.05R)"
+    },
+    "stats": {
+      "n_trades": 11,
+      "wr": 54.54545454545454,
+      "ev_r": -0.05018181818181819,
+      "total_pnl_r": -0.552,
+      "long_wr": 75.0,
+      "short_wr": 0.0,
+      "avg_score": 12.545454545454545,
+      "last_10_wr": 60.0
+    },
+    "last_updated": null
+  },
+  "AVAX": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV negative (-0.18R)"
+    },
+    "stats": {
+      "n_trades": 10,
+      "wr": 30.0,
+      "ev_r": -0.1756,
+      "total_pnl_r": -1.756,
+      "long_wr": 0.0,
+      "short_wr": 37.5,
+      "avg_score": 15.2,
+      "last_10_wr": 30.0
+    },
+    "last_updated": null
+  },
+  "LINK": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV negative (-0.03R)"
+    },
+    "stats": {
+      "n_trades": 18,
+      "wr": 50.0,
+      "ev_r": -0.028999999999999988,
+      "total_pnl_r": -0.5219999999999998,
+      "long_wr": 28.57142857142857,
+      "short_wr": 63.63636363636363,
+      "avg_score": 15.222222222222221,
+      "last_10_wr": 70.0
+    },
+    "last_updated": null
+  },
+  "SUI": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV negative (-0.10R)"
+    },
+    "stats": {
+      "n_trades": 19,
+      "wr": 47.368421052631575,
+      "ev_r": -0.10331578947368421,
+      "total_pnl_r": -1.9629999999999999,
+      "long_wr": 20.0,
+      "short_wr": 57.14285714285714,
+      "avg_score": 14.578947368421053,
+      "last_10_wr": 50.0
+    },
+    "last_updated": null
+  },
+  "DOT": {
+    "params": {
+      "score_good_threshold": 8,
+      "score_wait_threshold": 6,
+      "min_trend_strength": 40,
+      "allow_trading": true,
+      "confidence": "HIGH",
+      "reason": "WR 62%, EV +0.38R",
+      "form_warning": false
+    },
+    "stats": {
+      "n_trades": 13,
+      "wr": 61.53846153846154,
+      "ev_r": 0.37738461538461543,
+      "total_pnl_r": 4.906000000000001,
+      "long_wr": 100.0,
+      "short_wr": 54.54545454545454,
+      "avg_score": 15.23076923076923,
+      "last_10_wr": 50.0
+    },
+    "last_updated": null
+  },
+  "LTC": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV marginal (0.08R)"
+    },
+    "stats": {
+      "n_trades": 23,
+      "wr": 47.82608695652174,
+      "ev_r": 0.08126086956521739,
+      "total_pnl_r": 1.869,
+      "long_wr": 57.14285714285714,
+      "short_wr": 43.75,
+      "avg_score": 14.565217391304348,
+      "last_10_wr": 50.0
+    },
+    "last_updated": null
+  },
+  "BCH": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV negative (-0.06R)"
+    },
+    "stats": {
+      "n_trades": 26,
+      "wr": 42.30769230769231,
+      "ev_r": -0.058,
+      "total_pnl_r": -1.508,
+      "long_wr": 18.181818181818183,
+      "short_wr": 60.0,
+      "avg_score": 14.23076923076923,
+      "last_10_wr": 40.0
+    },
+    "last_updated": null
+  },
+  "APT": {
+    "params": {
+      "score_good_threshold": 8,
+      "score_wait_threshold": 6,
+      "min_trend_strength": 40,
+      "allow_trading": true,
+      "confidence": "HIGH",
+      "reason": "WR 58%, EV +0.19R",
+      "form_warning": false
+    },
+    "stats": {
+      "n_trades": 19,
+      "wr": 57.89473684210527,
+      "ev_r": 0.1892105263157895,
+      "total_pnl_r": 3.595,
+      "long_wr": 100.0,
+      "short_wr": 38.46153846153847,
+      "avg_score": 14.526315789473685,
+      "last_10_wr": 60.0
+    },
+    "last_updated": null
+  },
+  "TAO": {
+    "params": {
+      "score_good_threshold": 8,
+      "score_wait_threshold": 6,
+      "min_trend_strength": 40,
+      "allow_trading": true,
+      "confidence": "HIGH",
+      "reason": "WR 81%, EV +0.60R",
+      "form_warning": false
+    },
+    "stats": {
+      "n_trades": 37,
+      "wr": 81.08108108108108,
+      "ev_r": 0.5997297297297272,
+      "total_pnl_r": 22.189999999999905,
+      "long_wr": 58.82352941176471,
+      "short_wr": 100.0,
+      "avg_score": 13.18918918918919,
+      "last_10_wr": 100.0
+    },
+    "last_updated": null
+  },
+  "WLD": {
+    "params": {
+      "score_good_threshold": 8,
+      "score_wait_threshold": 6,
+      "min_trend_strength": 40,
+      "allow_trading": true,
+      "confidence": "HIGH",
+      "reason": "WR 79%, EV +0.36R",
+      "form_warning": false
+    },
+    "stats": {
+      "n_trades": 24,
+      "wr": 79.16666666666666,
+      "ev_r": 0.35908333333333337,
+      "total_pnl_r": 8.618,
+      "long_wr": 88.88888888888889,
+      "short_wr": 73.33333333333333,
+      "avg_score": 14.333333333333334,
+      "last_10_wr": 80.0
+    },
+    "last_updated": null
+  },
+  "SEI": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV marginal (0.00R)"
+    },
+    "stats": {
+      "n_trades": 21,
+      "wr": 52.38095238095239,
+      "ev_r": 0.0010000000000000002,
+      "total_pnl_r": 0.021000000000000005,
+      "long_wr": 33.33333333333333,
+      "short_wr": 77.77777777777779,
+      "avg_score": 13.380952380952381,
+      "last_10_wr": 50.0
+    },
+    "last_updated": null
+  },
+  "ORDI": {
+    "params": {
+      "score_good_threshold": 8,
+      "score_wait_threshold": 6,
+      "min_trend_strength": 40,
+      "allow_trading": true,
+      "confidence": "HIGH",
+      "reason": "WR 67%, EV +0.42R",
+      "form_warning": false
+    },
+    "stats": {
+      "n_trades": 12,
+      "wr": 66.66666666666666,
+      "ev_r": 0.42091666666666666,
+      "total_pnl_r": 5.051,
+      "long_wr": 100.0,
+      "short_wr": 55.55555555555556,
+      "avg_score": 14.083333333333334,
+      "last_10_wr": 60.0
+    },
+    "last_updated": null
+  },
+  "CRV": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV marginal (0.05R)"
+    },
+    "stats": {
+      "n_trades": 18,
+      "wr": 61.111111111111114,
+      "ev_r": 0.04544444444444444,
+      "total_pnl_r": 0.818,
+      "long_wr": 50.0,
+      "short_wr": 70.0,
+      "avg_score": 14.222222222222221,
+      "last_10_wr": 70.0
+    },
+    "last_updated": null
+  },
+  "TRUMP": {
+    "params": {
+      "score_good_threshold": 8,
+      "score_wait_threshold": 6,
+      "min_trend_strength": 40,
+      "allow_trading": true,
+      "confidence": "HIGH",
+      "reason": "WR 70%, EV +0.23R",
+      "form_warning": true
+    },
+    "stats": {
+      "n_trades": 40,
+      "wr": 70.0,
+      "ev_r": 0.22955,
+      "total_pnl_r": 9.182,
+      "long_wr": 66.66666666666666,
+      "short_wr": 70.58823529411765,
+      "avg_score": 14.675,
+      "last_10_wr": 50.0
+    },
+    "last_updated": null
+  },
+  "BLUR": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV negative (-0.28R)"
+    },
+    "stats": {
+      "n_trades": 29,
+      "wr": 41.37931034482759,
+      "ev_r": -0.2822068965517241,
+      "total_pnl_r": -8.184,
+      "long_wr": 0,
+      "short_wr": 41.37931034482759,
+      "avg_score": 14.89655172413793,
+      "last_10_wr": 30.0
+    },
+    "last_updated": null
+  },
+  "ARB": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV marginal (0.06R)"
+    },
+    "stats": {
+      "n_trades": 17,
+      "wr": 41.17647058823529,
+      "ev_r": 0.05647058823529412,
+      "total_pnl_r": 0.9600000000000001,
+      "long_wr": 60.0,
+      "short_wr": 14.285714285714285,
+      "avg_score": 12.823529411764707,
+      "last_10_wr": 40.0
+    },
+    "last_updated": null
+  },
+  "LDO": {
+    "params": {
+      "score_good_threshold": 999,
+      "score_wait_threshold": 999,
+      "min_trend_strength": 100,
+      "allow_trading": false,
+      "confidence": "BLOCKED",
+      "reason": "EV negative (-0.33R)"
+    },
+    "stats": {
+      "n_trades": 12,
+      "wr": 41.66666666666667,
+      "ev_r": -0.331,
+      "total_pnl_r": -3.972,
+      "long_wr": 25.0,
+      "short_wr": 50.0,
+      "avg_score": 14.75,
+      "last_10_wr": 40.0
+    },
+    "last_updated": null
+  },
+  "ZEC": {
+    "params": {
+      "score_good_threshold": 10,
+      "score_wait_threshold": 7,
+      "min_trend_strength": 50,
+      "allow_trading": true,
+      "confidence": "OK",
+      "reason": "WR 47%, EV +0.11R",
+      "form_warning": false
+    },
+    "stats": {
+      "n_trades": 15,
+      "wr": 46.666666666666664,
+      "ev_r": 0.10546666666666665,
+      "total_pnl_r": 1.5819999999999999,
+      "long_wr": 54.54545454545454,
+      "short_wr": 25.0,
+      "avg_score": 13.6,
+      "last_10_wr": 50.0
+    },
+    "last_updated": null
+  }
+}
