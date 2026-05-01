@@ -3824,8 +3824,19 @@ class TradingEngine:
                         f"📊 {symbol} {tf} | q={_q} s={_s} d={_d} k={_k} sess={_sess} adx={round(adx,1)}"
                     )
                 else:
+                    from config import SIGNAL_PARAMS as _SP
+                    _dz_lo = _SP.get('adx_death_zone_low', 35)
+                    _dz_hi = _SP.get('adx_death_zone_high', 45)
+                    _adx_max = _SP.get('adx_too_extreme', 50)
+                    _rng_blk = _SP.get('adx_ranging_block', 18)
+                    if (_dz_lo <= adx < _dz_hi) or adx >= _adx_max:
+                        _why = f"ADX {adx:.1f} diblok"
+                    elif adx < _rng_blk and et in ('SIDEWAYS', 'WEAK_UP', 'WEAK_DOWN'):
+                        _why = f"ADX {adx:.1f} ranging"
+                    else:
+                        _why = "zone/rejection"
                     logger.info(
-                        f"📊 {symbol} {tf} | q=None (tidak ada signal) adx={round(adx,1)} ema={et} htf={eth}"
+                        f"📊 {symbol} {tf} | q=None [{_why}] adx={round(adx,1)} ema={et} htf={eth}"
                     )
         except Exception:
             pass
