@@ -342,7 +342,7 @@ def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
     # ── Monitor loop (cek outcome) ───────────────────────
     def monitor_loop():
         time.sleep(180)  # grace lebih lama
-        logger.info("👁️ Scalp paper monitor dimulai (5 menit interval)")
+        logger.info("👁️ Scalp outcome monitor dimulai (5 menit interval)")
         while True:
             try:
                 closed = pt.monitor_all_open(_get_current_price)
@@ -357,4 +357,4 @@ def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
     t2 = threading.Thread(target=monitor_loop, daemon=True,
                           name="scalp_monitor_loop")
     t2.start()
-    logger.info("👁️ Scalp monitor scheduler: 5 menit interval")
+    logger.info("👁️ Scalp outcome monitor scheduler: 5 menit interval")
