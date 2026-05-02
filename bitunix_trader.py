@@ -757,6 +757,80 @@ class BitunixTrader:
         else:
             return {'ok': False, 'msg': f"Close gagal: {result.get('msg', 'error')}"}
 
+    def _get_current_sl(self, symbol: str, position_id: str = '') -> float:
+        """
+        Query SL aktif di exchange untuk posisi ini.
+        Return 0.0 kalau tidak ada SL terpasang.
+        Dipakai saat resume untuk derive trailing stage state dari truth (exchange).
+        """
+        sym = symbol.upper().replace('/USDT', '').replace('USDT', '') + 'USDT'
+        try:
+            tpsl_data = self._get("/api/v1/futures/tpsl/get_pending_orders",
+                                  {"symbol": sym})
+            tpsl_list = tpsl_data.get('data', [])
+            if not isinstance(tpsl_list, list):
+                return 0.0
+            for order in tpsl_list:
+                sl_price = order.get('slPrice')
+                if sl_price is None:
+                    continue
+                if position_id and str(order.get('positionId', '')) != str(position_id):
+                    continue
+                try:
+                    return float(sl_price)
+                except (TypeError, ValueError):
+                    continue
+            return 0.0
+        except Exception as e:
+            logger.debug(f"_get_current_sl {sym}: {e}")
+            return 0.0
+
+    def _detect_stage_from_sl(self, entry: float, current_sl: float,
+                              tp1: float, direction: str) -> dict:
+        """
+        Derive trailing stage state dari current SL price di exchange.
+        Bukan dari file (yang bisa stale).
+
+        Tier (offset SL dari entry, dalam unit R):
+          < -0.1   : Stage 0 (SL masih di area loss original)
+          -0.1 .. 0.4 : Stage 1 (BEP)
+          0.4 .. 0.9  : Stage 2 (locked +0.5R)
+          0.9 .. 1.1  : Stage 3 (locked +1R, ~TP1 area)
+          > 1.1    : Stage 4 (runner trail)
+        """
+        state = {
+            'bep_done': False,
+            'stage2_done': False,
+            'stage3_done': False,
+            'stage4_sl': None,
+            'extreme_px': entry,
+        }
+        if not current_sl or not entry or not tp1:
+            return state
+        risk_dist = abs(tp1 - entry)
+        if risk_dist <= 0:
+            return state
+
+        is_long = direction == 'LONG'
+        if is_long:
+            sl_r_offset = (current_sl - entry) / risk_dist
+        else:
+            sl_r_offset = (entry - current_sl) / risk_dist
+
+        if sl_r_offset >= -0.1:
+            state['bep_done'] = True
+        if sl_r_offset >= 0.4:
+            state['stage2_done'] = True
+        if sl_r_offset >= 0.9:
+            state['stage3_done'] = True
+        if sl_r_offset > 1.1:
+            state['stage4_sl'] = current_sl
+            if is_long:
+                state['extreme_px'] = current_sl + risk_dist * 0.5
+            else:
+                state['extreme_px'] = current_sl - risk_dist * 0.5
+        return state
+
     def move_sl_to_bep(self, symbol: str, entry_price: float) -> dict:
         """
         Geser SL ke harga entry (Break Even Point).
@@ -1049,8 +1123,29 @@ class BitunixTrader:
                     except Exception as _e:
                         logger.warning(f"TP1 retro error {sym}: {_e}")
 
-                logger.info(f"🔄 Resume monitor {sym} {direction} entry={entry} tp1={tp1}")
-                self.start_tp1_monitor(sym, entry, tp1, direction, notify_fn=notify_fn)
+                # Detect trailing stage state DARI EXCHANGE SL (truth source).
+                # Mencegah bug RESET SL ke entry saat restart (kasus PIPPIN/BASED
+                # 2026-05-02): in-memory stage2/3 reset, lalu Stage 1 BEP block
+                # re-call move_sl_to_bep yang reset SL exchange ke entry.
+                exchange_sl = self._get_current_sl(sym, str(pos_id))
+                resumed_state = self._detect_stage_from_sl(
+                    entry, exchange_sl, tp1, direction
+                )
+                # Display SL untuk web push — pakai exchange truth, fallback ke saved
+                effective_sl = exchange_sl if exchange_sl > 0 else (
+                    sl if not tp1_already_hit else entry
+                )
+
+                logger.info(
+                    f"🔄 Resume monitor {sym} {direction} entry={entry} tp1={tp1} "
+                    f"sl_exch={exchange_sl} stage=bep:{resumed_state['bep_done']} "
+                    f"s2:{resumed_state['stage2_done']} s3:{resumed_state['stage3_done']}"
+                )
+                self.start_tp1_monitor(
+                    sym, entry, tp1, direction,
+                    notify_fn=notify_fn,
+                    resumed_state=resumed_state,
+                )
                 resumed_filled += 1
 
                 # Re-push posisi ke web — recovery dari delete-bug race
@@ -1067,7 +1162,7 @@ class BitunixTrader:
                         'strategy'  : saved_full.get('strategy', 'swing'),
                         'quality'   : saved_full.get('quality', 'GOOD'),
                         'entry'     : entry,
-                        'sl'        : entry if tp1_already_hit else sl,
+                        'sl'        : effective_sl,
                         'tp1'       : tp1,
                         'tp2'       : saved_full.get('tp2', 0),
                         'rr'        : rr,
@@ -1079,7 +1174,7 @@ class BitunixTrader:
                         clean_sym2 = sym.replace('USDT', '')
                         self._patch_position_state(
                             clean_sym2,
-                            tp1_hit=True, bep_active=True, sl=entry,
+                            tp1_hit=True, bep_active=True, sl=effective_sl,
                         )
                 except Exception as _re:
                     logger.debug(f"Re-push posisi {sym} ke web gagal: {_re}")
@@ -1137,12 +1232,17 @@ class BitunixTrader:
             logger.error(f"resume_monitors_on_startup error: {e}")
 
     def start_tp1_monitor(self, symbol: str, entry: float, tp1: float,
-                          direction: str, notify_fn=None, level_price: float = 0.0):
+                          direction: str, notify_fn=None, level_price: float = 0.0,
+                          resumed_state: Optional[dict] = None):
         """
         Monitor posisi di background — kalau TP1 kena, geser SL ke BEP.
 
-        notify_fn: fungsi async untuk kirim notifikasi ke Telegram (opsional)
-        level_price: harga level S/R yang jadi dasar sinyal (untuk level_memory)
+        notify_fn    : fungsi async untuk kirim notifikasi ke Telegram (opsional)
+        level_price  : harga level S/R yang jadi dasar sinyal (untuk level_memory)
+        resumed_state: dict berisi {bep_done, stage2_done, stage3_done, stage4_sl,
+                       extreme_px} kalau dipanggil dari resume_monitors. Mencegah
+                       Stage 1 BEP di-call ulang yang bisa RESET SL ke entry padahal
+                       sudah di Stage 2/3/4 (bug PIPPIN/BASED 2026-05-02).
         """
         import threading
 
@@ -1152,13 +1252,27 @@ class BitunixTrader:
             max_wait     = 72 * 3600
             interval     = 30
             elapsed      = 0
-            bep_done     = False
-            stage2_done  = False
-            stage3_done  = False
-            stage4_sl    = None   # Opsi D: runner trail SL setelah +3R
-            extreme_px   = entry  # high/low ekstrem sejak entry
             initial_qty  = None   # catat qty awal posisi
             bep_attempts = 0      # batasi percobaan BEP
+
+            # Init stage state — restore dari resumed_state kalau ada
+            if resumed_state:
+                bep_done    = bool(resumed_state.get('bep_done', False))
+                stage2_done = bool(resumed_state.get('stage2_done', False))
+                stage3_done = bool(resumed_state.get('stage3_done', False))
+                stage4_sl   = resumed_state.get('stage4_sl', None)
+                extreme_px  = float(resumed_state.get('extreme_px', entry) or entry)
+                if bep_done or stage2_done or stage3_done or stage4_sl:
+                    logger.info(
+                        f"👁️ Resume {sym} stage state: bep={bep_done} "
+                        f"s2={stage2_done} s3={stage3_done} s4_sl={stage4_sl}"
+                    )
+            else:
+                bep_done     = False
+                stage2_done  = False
+                stage3_done  = False
+                stage4_sl    = None
+                extreme_px   = entry
 
             logger.info(f"👁️ Monitor TP1 {sym}: target={tp1}, BEP={entry}")
 
@@ -1266,6 +1380,17 @@ class BitunixTrader:
                             if r2.get('ok'):
                                 stage2_done = True
                                 logger.info(f"✅ Stage2 SL terpasang {sym} @ {sl_lock_2:.6g}")
+                                # Persist state — supaya restart tidak reset ke BEP
+                                try:
+                                    clean_sym = sym.replace('USDT', '')
+                                    saved = self._saved_positions.get(clean_sym, {})
+                                    saved['stage2_done'] = True
+                                    saved['sl'] = sl_lock_2
+                                    self._saved_positions[clean_sym] = saved
+                                    self._save_positions_to_file()
+                                    self._patch_position_state(clean_sym, sl=sl_lock_2)
+                                except Exception as _se:
+                                    logger.debug(f"Save stage2 state gagal: {_se}")
                                 if notify_fn and callable(notify_fn):
                                     try:
                                         import asyncio
@@ -1292,6 +1417,17 @@ class BitunixTrader:
                             if r3.get('ok'):
                                 stage3_done = True
                                 logger.info(f"✅ Stage3 SL terpasang {sym} @ {sl_lock_3:.6g} — profit +1R aman")
+                                # Persist state — supaya restart tidak reset
+                                try:
+                                    clean_sym = sym.replace('USDT', '')
+                                    saved = self._saved_positions.get(clean_sym, {})
+                                    saved['stage3_done'] = True
+                                    saved['sl'] = sl_lock_3
+                                    self._saved_positions[clean_sym] = saved
+                                    self._save_positions_to_file()
+                                    self._patch_position_state(clean_sym, sl=sl_lock_3)
+                                except Exception as _se:
+                                    logger.debug(f"Save stage3 state gagal: {_se}")
                                 if notify_fn and callable(notify_fn):
                                     try:
                                         import asyncio
@@ -1337,6 +1473,18 @@ class BitunixTrader:
                                 if r4.get('ok'):
                                     stage4_sl = new_trail
                                     logger.info(f"✅ Stage4 trail {sym} @ {new_trail:.6g}")
+                                    # Persist state — Stage 4 trail ke file + web
+                                    try:
+                                        clean_sym = sym.replace('USDT', '')
+                                        saved = self._saved_positions.get(clean_sym, {})
+                                        saved['stage4_sl'] = new_trail
+                                        saved['extreme_px'] = extreme_px
+                                        saved['sl'] = new_trail
+                                        self._saved_positions[clean_sym] = saved
+                                        self._save_positions_to_file()
+                                        self._patch_position_state(clean_sym, sl=new_trail)
+                                    except Exception as _se:
+                                        logger.debug(f"Save stage4 state gagal: {_se}")
                                     if notify_fn and callable(notify_fn):
                                         try:
                                             import asyncio
