@@ -302,13 +302,17 @@ def start_scalp_live(coins_fn: Callable, notify_fn: Callable,
                                         f"✅ Scalp {tf} real #{signals_found}: "
                                         f"{coin} {direction}")
                                     _send_signal_notif(notify_fn, sig, real_trade=True)
-                                    trader.start_tp1_monitor(
-                                        symbol=coin,
-                                        entry=sig.get('entry', 0),
-                                        tp1=sig.get('tp1', 0),
-                                        direction=direction,
-                                        notify_fn=notify_fn,
-                                    )
+                                    # Skip TP1 monitor kalau LIMIT belum filled —
+                                    # _start_limit_entry_monitor akan handle saat
+                                    # actual filled (mencegah false SL palsu)
+                                    if result.get('order_type') == 'MARKET':
+                                        trader.start_tp1_monitor(
+                                            symbol=coin,
+                                            entry=sig.get('entry', 0),
+                                            tp1=sig.get('tp1', 0),
+                                            direction=direction,
+                                            notify_fn=notify_fn,
+                                        )
                                 else:
                                     msg = result.get('msg', '') if result else 'gagal'
                                     logger.info(f"⚠️ Scalp {tf} skip {coin}: {msg}")

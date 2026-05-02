@@ -1817,12 +1817,18 @@ class TelegramBot:
                     )
                     for cid in list(self.chat_ids):
                         await self._safe_send(cid, notif)
-                    self.trader.start_tp1_monitor(
-                        symbol=symbol, entry=sig.get("entry",0),
-                        tp1=sig.get("tp1",0), direction=direction,
-                        notify_fn=self._make_notify_fn(),
-                        level_price=sig.get("level_price", 0.0),
-                    )
+                    # 2026-05-03: skip TP1 monitor untuk LIMIT order yang belum
+                    # filled — kalau di-start, monitor cek get_open_position()
+                    # return None (LIMIT bukan position) → false-trigger SL.
+                    # _start_limit_entry_monitor (di place_order) akan handle
+                    # TP1 monitor saat LIMIT actual filled.
+                    if result.get("order_type") == "MARKET":
+                        self.trader.start_tp1_monitor(
+                            symbol=symbol, entry=sig.get("entry",0),
+                            tp1=sig.get("tp1",0), direction=direction,
+                            notify_fn=self._make_notify_fn(),
+                            level_price=sig.get("level_price", 0.0),
+                        )
                     if executed >= 1:
                         break
 
@@ -1969,13 +1975,17 @@ class TelegramBot:
                         # Refresh posisi
                         positions = await loop.run_in_executor(None, self.trader.get_positions)
 
-                        # Start TP1 monitor — dengan notify_fn agar post-mortem dikirim ke Telegram
-                        self.trader.start_tp1_monitor(
-                            symbol=symbol, entry=sig.get("entry",0),
-                            tp1=sig.get("tp1",0), direction=direction,
-                            notify_fn=self._make_notify_fn(),
-                            level_price=sig.get("level_price", 0.0),
-                        )
+                        # Start TP1 monitor — HANYA kalau order MARKET. Untuk LIMIT
+                        # yang belum filled, _start_limit_entry_monitor akan handle
+                        # TP1 monitor saat actual filled. Tanpa cek ini → false SL
+                        # palsu untuk LIMIT pending (bug ARB 2026-05-03).
+                        if result.get("order_type") == "MARKET":
+                            self.trader.start_tp1_monitor(
+                                symbol=symbol, entry=sig.get("entry",0),
+                                tp1=sig.get("tp1",0), direction=direction,
+                                notify_fn=self._make_notify_fn(),
+                                level_price=sig.get("level_price", 0.0),
+                            )
 
                 except Exception as e:
                     logger.error(f"Auto scan {symbol}: {e}")

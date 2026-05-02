@@ -693,6 +693,7 @@ class BitunixTrader:
             'ok'          : True,
             'order_id'    : order_id,
             'tp1_order_id': tp1_order_id,
+            'order_type'  : order_type,   # 'MARKET' atau 'LIMIT' — caller wajib cek
             'symbol'      : sym,
             'direction'   : direction,
             'qty'         : qty,
