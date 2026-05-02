@@ -785,6 +785,44 @@ class BitunixTrader:
             logger.debug(f"_get_current_sl {sym}: {e}")
             return 0.0
 
+    def _get_price_extreme_since(self, symbol: str, hours: int,
+                                  direction: str) -> float:
+        """
+        Query Binance futures klines untuk dapat extreme price (high untuk LONG,
+        low untuk SHORT) selama N jam terakhir.
+
+        Dipakai saat resume untuk auto-promote stage kalau price PERNAH lewat
+        trigger Stage 3/4 walaupun sekarang sudah retrace. Tanpa ini, restart
+        bot bikin posisi yang udah Stage 3 turun ke Stage 2 (kasus PIPPIN/BASED
+        2026-05-02).
+
+        Return 0.0 kalau gagal (tidak akan auto-promote, fallback ke detect_from_sl).
+        """
+        try:
+            sym = symbol.upper().replace('/USDT', '').replace('USDT', '') + 'USDT'
+            url = 'https://fapi.binance.com/fapi/v1/klines'
+            limit = max(min(hours * 12, 1000), 12)  # 5m candles → 12/hour, max 1000
+            params = {
+                'symbol'  : sym,
+                'interval': '5m',
+                'limit'   : str(limit),
+            }
+            r = requests.get(url, params=params, timeout=10)
+            if r.status_code != 200:
+                return 0.0
+            klines = r.json()
+            if not klines or not isinstance(klines, list):
+                return 0.0
+            # Kline structure: [open_time, open, high, low, close, volume, ...]
+            highs = [float(k[2]) for k in klines]
+            lows  = [float(k[3]) for k in klines]
+            if direction == 'LONG':
+                return max(highs) if highs else 0.0
+            return min(lows) if lows else 0.0
+        except Exception as e:
+            logger.debug(f"_get_price_extreme_since {symbol}: {e}")
+            return 0.0
+
     def _detect_stage_from_sl(self, entry: float, current_sl: float,
                               tp1: float, direction: str) -> dict:
         """
@@ -1131,6 +1169,79 @@ class BitunixTrader:
                 resumed_state = self._detect_stage_from_sl(
                     entry, exchange_sl, tp1, direction
                 )
+
+                # AUTO-PROMOTE saat resume: kalau price PERNAH lewat trigger Stage
+                # 3 (atau Stage 4) selama 24h terakhir, promote SL ke Stage 3/4
+                # walaupun current price sudah retrace. Tanpa ini, posisi yang
+                # tadinya Stage 3 turun ke Stage 2 saat restart.
+                if resumed_state['stage2_done'] and not resumed_state['stage3_done']:
+                    is_long_pos = direction == 'LONG'
+                    risk_dist = abs(tp1 - entry)
+                    if risk_dist > 0:
+                        extreme_24h = self._get_price_extreme_since(sym, 24, direction)
+                        if extreme_24h > 0:
+                            trigger_3 = entry + risk_dist * 2.0 if is_long_pos else entry - risk_dist * 2.0
+                            sl_lock_3 = entry + risk_dist * 1.0 if is_long_pos else entry - risk_dist * 1.0
+                            ext_hit_s3 = (
+                                (is_long_pos and extreme_24h >= trigger_3) or
+                                (not is_long_pos and extreme_24h <= trigger_3)
+                            )
+                            if ext_hit_s3:
+                                logger.info(
+                                    f"🚀 AUTO-PROMOTE Stage 3 {sym}: extreme_24h={extreme_24h} "
+                                    f"lewat trigger_3={trigger_3:.6g} → SL ke {sl_lock_3:.6g}"
+                                )
+                                r3 = self.move_sl_trailing(sym, sl_lock_3)
+                                if r3.get('ok'):
+                                    resumed_state['stage3_done'] = True
+                                    exchange_sl = sl_lock_3
+                                    # Persist
+                                    try:
+                                        clean_sym3 = sym.replace('USDT', '')
+                                        saved_s3 = self._saved_positions.get(clean_sym3, {})
+                                        saved_s3['stage3_done'] = True
+                                        saved_s3['sl'] = sl_lock_3
+                                        self._saved_positions[clean_sym3] = saved_s3
+                                        self._save_positions_to_file()
+                                    except Exception as _ps3:
+                                        logger.debug(f"Save auto-promote stage3 gagal: {_ps3}")
+                                    # Cek Stage 4 promote
+                                    trigger_4 = entry + risk_dist * 3.0 if is_long_pos else entry - risk_dist * 3.0
+                                    ext_hit_s4 = (
+                                        (is_long_pos and extreme_24h >= trigger_4) or
+                                        (not is_long_pos and extreme_24h <= trigger_4)
+                                    )
+                                    if ext_hit_s4:
+                                        # Stage 4: trail SL = ekstrem ± 0.5R
+                                        if is_long_pos:
+                                            trail_sl_4 = extreme_24h - risk_dist * 0.5
+                                        else:
+                                            trail_sl_4 = extreme_24h + risk_dist * 0.5
+                                        # Hanya promote kalau lebih ketat dari sl_lock_3
+                                        better_than_s3 = (
+                                            (is_long_pos and trail_sl_4 > sl_lock_3) or
+                                            (not is_long_pos and trail_sl_4 < sl_lock_3)
+                                        )
+                                        if better_than_s3:
+                                            logger.info(
+                                                f"🏃 AUTO-PROMOTE Stage 4 {sym}: extreme={extreme_24h} "
+                                                f"trail SL ke {trail_sl_4:.6g}"
+                                            )
+                                            r4 = self.move_sl_trailing(sym, trail_sl_4)
+                                            if r4.get('ok'):
+                                                resumed_state['stage4_sl'] = trail_sl_4
+                                                resumed_state['extreme_px'] = extreme_24h
+                                                exchange_sl = trail_sl_4
+                                                try:
+                                                    saved_s4 = self._saved_positions.get(clean_sym3, {})
+                                                    saved_s4['stage4_sl'] = trail_sl_4
+                                                    saved_s4['extreme_px'] = extreme_24h
+                                                    saved_s4['sl'] = trail_sl_4
+                                                    self._saved_positions[clean_sym3] = saved_s4
+                                                    self._save_positions_to_file()
+                                                except Exception as _ps4:
+                                                    logger.debug(f"Save auto-promote stage4 gagal: {_ps4}")
+
                 # Display SL untuk web push — pakai exchange truth, fallback ke saved
                 effective_sl = exchange_sl if exchange_sl > 0 else (
                     sl if not tp1_already_hit else entry
