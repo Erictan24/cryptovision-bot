@@ -1761,7 +1761,10 @@ class TelegramBot:
                 direction = sig.get("direction", "")
                 symbol    = item.get("symbol", sig.get("symbol", ""))
 
-                if quality not in ("GOOD", "IDEAL"):
+                # 2026-05-02: lower threshold GOOD→MODERATE. Data live 14d:
+                # GOOD AvgR -0.09 vs MODERATE AvgR +0.03. MODERATE pakai 0.7x risk
+                # via quality_mult di place_order, jadi proteksi tetap ada.
+                if quality not in ("MODERATE", "GOOD", "IDEAL"):
                     continue
 
                 # Cek daily loss
@@ -1875,7 +1878,9 @@ class TelegramBot:
                     quality   = sig.get("quality", "")
                     direction = sig.get("direction", "")
 
-                    if quality not in ("GOOD", "IDEAL"):
+                    # 2026-05-02: lower threshold GOOD→MODERATE (lihat catatan di
+                    # _auto_execute_signals). Risk MODERATE 0.7x via quality_mult.
+                    if quality not in ("MODERATE", "GOOD", "IDEAL"):
                         continue
 
                     # Anti-duplicate: cek apakah sudah trade coin ini
