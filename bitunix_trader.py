@@ -1386,7 +1386,17 @@ class BitunixTrader:
                 stage4_sl    = None
                 extreme_px   = entry
 
-            logger.info(f"👁️ Monitor TP1 {sym}: target={tp1}, BEP={entry}")
+            # Track apakah TP2 actually hit (price reached TP2 target).
+            # Untuk outcome label "TP2" yang akurat — bukan inferred dari pnl_r.
+            tp2_hit = False
+            try:
+                clean_sym_init = sym.replace('USDT', '')
+                _saved_init = self._saved_positions.get(clean_sym_init, {})
+                tp2_target = float(_saved_init.get('tp2', 0))
+            except Exception:
+                tp2_target = 0.0
+
+            logger.info(f"👁️ Monitor TP1 {sym}: target={tp1}, BEP={entry}, tp2_target={tp2_target}")
 
             while elapsed < max_wait:
                 time.sleep(interval)
@@ -1429,6 +1439,16 @@ class BitunixTrader:
                     qty_reduced = pos_qty > 0 and pos_qty < initial_qty * 0.7
 
                     tp1_hit = price_hit or qty_reduced
+
+                    # ── DETECT TP2 hit (untuk outcome label akurat) ─
+                    if not tp2_hit and tp2_target > 0:
+                        tp2_reached = (
+                            (is_long and current >= tp2_target) or
+                            (not is_long and current <= tp2_target)
+                        )
+                        if tp2_reached:
+                            tp2_hit = True
+                            logger.info(f"🎯 TP2 reached {sym} @ {current} (target={tp2_target})")
 
                     # ── TRAILING SL STAGES ────────────────────────
                     # Stage 1 (TP1 hit): SL → BEP (break even)
@@ -1649,7 +1669,23 @@ class BitunixTrader:
                     # Push closed trade ke Neon DB
                     try:
                         saved_data = self._saved_positions.get(symbol, {})
-                        outcome = "PROFIT" if last_pnl > 0 else ("BEP" if is_bep_close else "LOSS")
+                        # Outcome detail (2026-05-03) — base on actual stage tracking,
+                        # bukan pnl_r threshold (bisa salah label saat RR vary atau
+                        # trail stop kicked in mid-trade).
+                        # Mental model user:
+                        #   TP2 = price actually hit TP2 target (full close di profit)
+                        #   TP1 = TP1 hit + BEP active. Exit anywhere from BEP ke
+                        #         Stage 2/3 trail. Profit kecil-besar tetap TP1.
+                        #   BEP = TP1 belum kena, exit di breakeven (rare)
+                        #   SL  = TP1 belum kena, net loss
+                        if tp2_hit:
+                            outcome = "TP2"
+                        elif tp1_hit or bep_done:
+                            outcome = "TP1"
+                        elif last_pnl < 0:
+                            outcome = "SL"
+                        else:
+                            outcome = "BEP"
                         # pnl_r = pnl_usd / risk_usd (multiple of risk).
                         # risk_usd = qty × |entry - sl| (USD risked per trade).
                         # Bug sebelumnya: bagi pakai risk_dist (price diff) → pnl_r melambung.
