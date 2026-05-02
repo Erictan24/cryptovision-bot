@@ -1803,8 +1803,12 @@ class TelegramBot:
                     ico        = "🟢" if direction == "LONG" else "🔴"
                     q_mult     = 1.5 if quality == "IDEAL" else 1.0
                     risk_shown = round(self.trader.risk_usd * q_mult, 2)
+                    is_market  = result.get("order_type") == "MARKET"
+                    header     = "✅ SWING TRADE EXECUTED (MARKET)" if is_market else "📥 SWING LIMIT ORDER PLACED"
+                    footer     = ("👁️ TP1 monitor aktif" if is_market else
+                                  "⏳ Menunggu LIMIT fill — TP1 monitor start otomatis saat filled")
                     notif = (
-                        "✅ SWING AUTO TRADE EXECUTED\n" +
+                        header + "\n" +
                         "=" * 28 + "\n" +
                         ico + " " + symbol + " " + direction + " [" + quality + "]\n" +
                         "Entry: " + str(round(sig.get("entry",0), 6)) + "\n" +
@@ -1813,7 +1817,7 @@ class TelegramBot:
                         "TP2  : " + str(round(sig.get("tp2",0), 6)) + "\n" +
                         "Risk : $" + str(risk_shown) +
                         (" (1.5x IDEAL)" if quality == "IDEAL" else "") + "\n\n" +
-                        "👁️ TP1 monitor aktif"
+                        footer
                     )
                     for cid in list(self.chat_ids):
                         await self._safe_send(cid, notif)
@@ -1955,8 +1959,12 @@ class TelegramBot:
                         rr         = sig.get("rr2", sig.get("rr", 0))
                         q_mult     = 1.5 if quality == "IDEAL" else 1.0
                         risk_shown = round(self.trader.risk_usd * q_mult, 2)
+                        is_market  = result_order.get("order_type") == "MARKET"
+                        header     = "✅ SWING TRADE EXECUTED (MARKET)" if is_market else "📥 SWING LIMIT ORDER PLACED"
+                        footer     = ("👁️ TP1 monitor aktif" if is_market else
+                                      "⏳ Menunggu LIMIT fill — TP1 monitor start otomatis saat filled")
                         notif = (
-                            "✅ SWING AUTO TRADE\n" +
+                            header + "\n" +
                             "=" * 28 + "\n" +
                             ico + " " + symbol + " " + direction + " [" + quality + "]\n" +
                             "Entry : " + str(round(sig.get("entry",0), 6)) + "\n" +
@@ -1966,7 +1974,7 @@ class TelegramBot:
                             "RR    : 1:" + str(round(rr, 1)) + "\n" +
                             "Risk  : $" + str(risk_shown) +
                             (" (1.5x IDEAL)" if quality == "IDEAL" else "") + "\n\n" +
-                            "👁️ TP1 monitor aktif"
+                            footer
                         )
                         for cid in list(self.chat_ids):
                             await self._send_signal_with_chart(
