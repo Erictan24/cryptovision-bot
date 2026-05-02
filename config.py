@@ -170,7 +170,7 @@ SIGNAL_PARAMS = {
     'flip_zone_atr_mult'     : 0.3,
     'sweep_atr_mult'         : 0.15,
     'rejection_body_atr_mult': 0.7,
-    'zone_margin_atr_mult'   : 0.6,   # Diperlebar — zona lebih mudah terdeteksi
+    'zone_margin_atr_mult'   : 1.0,   # Backtest 2026-05-02: 0.6→1.0 +20% volume, WR 59.3%→60.0%
     'freshness_retest_atr'   : 0.6,   # Diperlebar mengikuti zone width
 
     # Signal quality thresholds
