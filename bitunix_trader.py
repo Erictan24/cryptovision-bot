@@ -1388,13 +1388,38 @@ class BitunixTrader:
 
             # Track apakah TP2 actually hit (price reached TP2 target).
             # Untuk outcome label "TP2" yang akurat — bukan inferred dari pnl_r.
+            # PERSIST ke file: bot restart tidak reset tp2_hit (bug BASED 2026-05-03
+            # — TP2 hit lalu restart, tp2_hit jadi False, label salah TP1).
             tp2_hit = False
+            tp2_target = 0.0
             try:
                 clean_sym_init = sym.replace('USDT', '')
                 _saved_init = self._saved_positions.get(clean_sym_init, {})
                 tp2_target = float(_saved_init.get('tp2', 0))
+                # Restore tp2_hit dari saved state kalau pernah ke-detect sebelumnya
+                tp2_hit = bool(_saved_init.get('tp2_hit', False))
+
+                # Auto-detect tp2_hit dari price extreme 24h saat resume —
+                # untuk kasus posisi yang sempat hit TP2 sebelum restart tapi
+                # tp2_hit flag belum sempat ke-persist (legacy positions).
+                if not tp2_hit and tp2_target > 0:
+                    extreme = self._get_price_extreme_since(sym, 24, direction)
+                    if extreme > 0:
+                        if direction == 'LONG' and extreme >= tp2_target:
+                            tp2_hit = True
+                            logger.info(f"📌 {sym}: tp2_hit auto-detected dari extreme_24h={extreme} >= tp2={tp2_target}")
+                        elif direction == 'SHORT' and extreme <= tp2_target:
+                            tp2_hit = True
+                            logger.info(f"📌 {sym}: tp2_hit auto-detected dari extreme_24h={extreme} <= tp2={tp2_target}")
+                        if tp2_hit:
+                            try:
+                                _saved_init['tp2_hit'] = True
+                                self._saved_positions[clean_sym_init] = _saved_init
+                                self._save_positions_to_file()
+                            except Exception:
+                                pass
             except Exception:
-                tp2_target = 0.0
+                pass
 
             logger.info(f"👁️ Monitor TP1 {sym}: target={tp1}, BEP={entry}, tp2_target={tp2_target}")
 
@@ -1449,6 +1474,16 @@ class BitunixTrader:
                         if tp2_reached:
                             tp2_hit = True
                             logger.info(f"🎯 TP2 reached {sym} @ {current} (target={tp2_target})")
+                            # Persist supaya bot restart tidak reset
+                            try:
+                                clean_sym_t2 = sym.replace('USDT', '')
+                                saved_t2 = self._saved_positions.get(clean_sym_t2, {})
+                                saved_t2['tp2_hit'] = True
+                                saved_t2['tp2_hit_at'] = datetime.now().isoformat()
+                                self._saved_positions[clean_sym_t2] = saved_t2
+                                self._save_positions_to_file()
+                            except Exception as _se:
+                                logger.debug(f"Save tp2_hit flag gagal: {_se}")
 
                     # ── TRAILING SL STAGES ────────────────────────
                     # Stage 1 (TP1 hit): SL → BEP (break even)
