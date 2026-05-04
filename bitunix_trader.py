@@ -1704,13 +1704,48 @@ class BitunixTrader:
                     # Push closed trade ke Neon DB
                     try:
                         saved_data = self._saved_positions.get(symbol, {})
-                        # Outcome detail (2026-05-03) — base on actual stage tracking,
-                        # bukan pnl_r threshold (bisa salah label saat RR vary atau
-                        # trail stop kicked in mid-trade).
-                        # Mental model user:
-                        #   TP2 = price actually hit TP2 target (full close di profit)
-                        #   TP1 = TP1 hit + BEP active. Exit anywhere from BEP ke
-                        #         Stage 2/3 trail. Profit kecil-besar tetap TP1.
+
+                        # FINAL VERIFICATION tp2_hit via Binance kline:
+                        # kalau tp2_hit masih False di close time, verify pakai
+                        # market data — apakah price actually pernah nyentuh TP2
+                        # selama trade hidup. Catch case timing miss (in-memory
+                        # reset oleh restart, polling miss intra-candle wick, dll).
+                        # 2026-05-04: source-of-truth = market data, bukan inferred.
+                        if not tp2_hit and tp2_target > 0:
+                            try:
+                                # Estimate trade duration hours from opened_at
+                                opened_at_str = saved_data.get('opened_at', '')
+                                trade_hours = 24
+                                if opened_at_str:
+                                    try:
+                                        opened_dt = datetime.strptime(
+                                            opened_at_str, '%Y-%m-%d %H:%M:%S'
+                                        )
+                                        elapsed_h = (datetime.now() - opened_dt).total_seconds() / 3600.0
+                                        # Cap di 80 jam (limit kline 1000 × 5m)
+                                        trade_hours = max(1, min(int(elapsed_h) + 1, 80))
+                                    except Exception:
+                                        pass
+                                extreme_v = self._get_price_extreme_since(
+                                    sym, trade_hours, direction
+                                )
+                                if extreme_v > 0:
+                                    is_long_v = direction == 'LONG'
+                                    if (is_long_v and extreme_v >= tp2_target) or \
+                                       (not is_long_v and extreme_v <= tp2_target):
+                                        tp2_hit = True
+                                        logger.info(
+                                            f"📌 {sym}: tp2_hit verified at close "
+                                            f"via kline {trade_hours}h — extreme={extreme_v} "
+                                            f"vs tp2={tp2_target}"
+                                        )
+                            except Exception as _ev:
+                                logger.debug(f"Final tp2_hit verification gagal: {_ev}")
+
+                        # Outcome detail — base on actual stage tracking + final
+                        # market verification. Mental model user:
+                        #   TP2 = price actually hit TP2 target (verified)
+                        #   TP1 = TP1 hit + BEP / trail (TP2 not reached)
                         #   BEP = TP1 belum kena, exit di breakeven (rare)
                         #   SL  = TP1 belum kena, net loss
                         if tp2_hit:
