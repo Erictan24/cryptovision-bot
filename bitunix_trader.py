@@ -956,10 +956,13 @@ class BitunixTrader:
             "slOrderType" : "MARKET",
         }
         result = self._post("/api/v1/futures/tpsl/position/place_order", body)
-        logger.info(f"BEP place_order: code={result.get('code')} msg={result.get('msg','')} orderId={result.get('data',{}).get('orderId','')}")
+        # 2026-05-07: kalau API return data=null (sukses tanpa orderId payload),
+        # `result.get('data',{})` jadi None → .get() crash. Pakai (data or {}).
+        _data = result.get('data') or {}
+        logger.info(f"BEP place_order: code={result.get('code')} msg={result.get('msg','')} orderId={_data.get('orderId','')}")
 
         if result.get('code') == 0:
-            order_id = result.get('data', {}).get('orderId', '')
+            order_id = _data.get('orderId', '')
             logger.info(f"✅ SL {sym} BEP terpasang @ {entry_price} (orderId={order_id})")
             return {'ok': True, 'msg': f'SL BEP terpasang @ {entry_price}'}
 
