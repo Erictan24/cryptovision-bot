@@ -304,6 +304,48 @@ class BitunixTrader:
                 return pos
         return None
 
+    def check_position_status(self, symbol: str) -> Optional[bool]:
+        """Verify posisi truly closed di exchange — distinguish dari API error.
+
+        2026-05-06: bug PIPPIN — DNS error 3x → bot anggap closed → stop monitor
+        padahal posisi masih open di exchange. Method ini distinguish:
+
+        Returns:
+            True   → posisi ADA di exchange (still open)
+            False  → posisi BENAR-BENAR tidak ada (confirmed closed) — API success
+            None   → CANNOT VERIFY (DNS error, network error, API failure) —
+                     caller harus retry, JANGAN treat as closed.
+        """
+        try:
+            data = self._get("/api/v1/futures/position/get_pending_positions")
+        except Exception as e:
+            logger.warning(f"check_position_status({symbol}): exception {e}")
+            return None
+
+        if not data:
+            # _get() returned {} — exception swallowed inside. Treat as "cannot verify".
+            return None
+
+        if data.get('code') != 0:
+            # API returned error code (rate limit, auth, etc) — cannot verify
+            logger.warning(f"check_position_status({symbol}): API code={data.get('code')} msg={data.get('msg')}")
+            return None
+
+        # API success — parse positions
+        result = data.get('data', [])
+        if isinstance(result, dict):
+            positions = result.get('positionList', [])
+        elif isinstance(result, list):
+            positions = result
+        else:
+            positions = []
+
+        sym = symbol.upper().replace('/USDT', '').replace('USDT', '') + 'USDT'
+        for pos in positions:
+            if pos.get('symbol', '').upper() == sym:
+                return True  # still open
+        return False  # confirmed closed
+
     def has_pending_order(self, symbol: str) -> bool:
         """
         Cek apakah ada pending LIMIT order untuk coin ini.
@@ -1430,22 +1472,35 @@ class BitunixTrader:
                 try:
                     pos = self.get_open_position(symbol)
                     if not pos:
-                        # Race condition guard: Bitunix API kadang sebentar
-                        # return empty (network glitch / rate limit). Recheck
-                        # 3x dengan delay sebelum confirm closed — biar tidak
-                        # premature delete posisi dari web (bug PIPPIN 27 Apr).
-                        confirmed_closed = True
+                        # 2026-05-06: pakai check_position_status untuk distinguish
+                        # "API/DNS error" vs "truly closed". Bug PIPPIN: DNS error
+                        # 3x retry juga return None → bot anggap closed → stop monitor.
+                        # Sekarang: error API → JANGAN stop, retry next cycle.
+                        confirmed_closed = False
+                        clean_empty_count = 0
                         for _retry in range(3):
                             time.sleep(5)
-                            recheck = self.get_open_position(symbol)
-                            if recheck:
-                                pos = recheck
-                                confirmed_closed = False
-                                logger.debug(f"👁️ {sym}: false-empty recovered (retry {_retry+1})")
-                                break
+                            status = self.check_position_status(symbol)
+                            if status is True:
+                                pos = self.get_open_position(symbol)
+                                if pos:
+                                    logger.debug(f"👁️ {sym}: false-empty recovered (retry {_retry+1})")
+                                    break
+                            elif status is False:
+                                clean_empty_count += 1
+                            else:
+                                # status is None = API error — JANGAN dihitung sebagai empty
+                                logger.warning(f"👁️ {sym}: recheck #{_retry+1} API error — skip retry, monitor lanjut")
+                        # Hanya confirm closed kalau 3x clean empty (no API errors)
+                        if clean_empty_count >= 3:
+                            confirmed_closed = True
                         if confirmed_closed:
-                            logger.info(f"👁️ Monitor {sym}: posisi sudah close (3x recheck) — stop")
+                            logger.info(f"👁️ Monitor {sym}: posisi sudah close (3x clean recheck) — stop")
                             break
+                        if not pos:
+                            # Tidak confirmed closed (ada API error), skip cycle ini, retry next loop
+                            logger.info(f"👁️ Monitor {sym}: cannot verify ({clean_empty_count}/3 clean), retry next cycle")
+                            continue
 
                     current = self._get_current_price(sym)
                     if current <= 0:

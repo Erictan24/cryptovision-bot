@@ -293,6 +293,105 @@ def calc_macd(df: pd.DataFrame, fast: int = 12, slow: int = 26,
 
 
 # =========================================================
+#  3.5 VWAP & STOCHASTIC RSI (Tier 2 indicators 2026-05-06)
+# =========================================================
+def calc_vwap(df: pd.DataFrame, period: int = 96) -> dict:
+    """
+    Rolling VWAP — institutional support/resistance level.
+
+    Crypto futures 24/7 → pakai rolling window (bukan session VWAP).
+    Default 96 candle = 24 jam @ 15m TF.
+
+    Use case scalp:
+      - Price > VWAP = bullish bias (institutional accumulation)
+      - Price < VWAP = bearish bias (institutional distribution)
+      - VWAP touch + reversal = high prob entry
+    """
+    if df is None or len(df) < period:
+        return None
+    try:
+        typical = (df['high'] + df['low'] + df['close']) / 3
+        tp_vol = typical * df['volume']
+        cum_tp = tp_vol.rolling(period).sum()
+        cum_vol = df['volume'].rolling(period).sum().replace(0, 1e-10)
+        vwap = cum_tp / cum_vol
+        if pd.isna(vwap.iloc[-1]):
+            return None
+        price = float(df['close'].iloc[-1])
+        v_now = float(vwap.iloc[-1])
+        v_prev = float(vwap.iloc[-2]) if len(vwap) >= 2 else v_now
+        return {
+            'vwap': v_now,
+            'price': price,
+            'distance_pct': (price - v_now) / v_now * 100,
+            'above': price > v_now,
+            'below': price < v_now,
+            'rising': v_now > v_prev,
+            'falling': v_now < v_prev,
+        }
+    except Exception:
+        return None
+
+
+def calc_stoch_rsi(df: pd.DataFrame, rsi_period: int = 14,
+                   stoch_period: int = 14, k_smooth: int = 3,
+                   d_smooth: int = 3) -> dict:
+    """
+    Stochastic RSI — leading reversal indicator.
+
+    Lebih sensitive dari RSI biasa: deteksi extreme di RSI itself.
+    Common signal:
+      - K <20 = oversold; <10 = deeply oversold
+      - K >80 = overbought; >90 = deeply overbought
+      - K cross D up dari oversold = bullish entry
+      - K cross D down dari overbought = bearish entry
+    """
+    min_len = rsi_period + stoch_period + k_smooth + d_smooth + 2
+    if df is None or len(df) < min_len:
+        return None
+    try:
+        delta = df['close'].diff()
+        gain = delta.clip(lower=0).rolling(rsi_period).mean()
+        loss = (-delta.clip(upper=0)).rolling(rsi_period).mean()
+        rs = gain / loss.replace(0, 1e-10)
+        rsi = 100 - (100 / (1 + rs))
+
+        rsi_min = rsi.rolling(stoch_period).min()
+        rsi_max = rsi.rolling(stoch_period).max()
+        denom = (rsi_max - rsi_min).replace(0, 1e-10)
+        stoch_rsi = 100 * (rsi - rsi_min) / denom
+
+        k = stoch_rsi.rolling(k_smooth).mean()
+        d = k.rolling(d_smooth).mean()
+
+        if pd.isna(k.iloc[-1]) or pd.isna(d.iloc[-1]):
+            return None
+
+        k_now = float(k.iloc[-1])
+        d_now = float(d.iloc[-1])
+        k_prev = float(k.iloc[-2])
+        d_prev = float(d.iloc[-2])
+
+        cross_up = k_prev <= d_prev and k_now > d_now
+        cross_down = k_prev >= d_prev and k_now < d_now
+
+        return {
+            'k': k_now,
+            'd': d_now,
+            'oversold': k_now < 20,
+            'overbought': k_now > 80,
+            'deep_oversold': k_now < 10,
+            'deep_overbought': k_now > 90,
+            'rising': k_now > k_prev,
+            'falling': k_now < k_prev,
+            'cross_up': cross_up,
+            'cross_down': cross_down,
+        }
+    except Exception:
+        return None
+
+
+# =========================================================
 #  4. WEDGE / CHANNEL DETECTION
 # =========================================================
 def _find_swing_points(df: pd.DataFrame, window: int = 3,
@@ -2407,6 +2506,308 @@ def _determine_scalp_quality_v43(score: int, kills: int,
 
 
 # =========================================================
+#  9.5 MODE RANGE — Mean-reversion fallback untuk sideways market
+# =========================================================
+# 2026-05-05: SaaS launch needs consistent signal volume.
+# Trend-following engine block 100% saat market sideways (ADX <25, no clear trend).
+# Mode RANGE fade BB extremes saat sideways → mean reversion ke BB middle.
+#
+# Filosofi:
+#   - Trend mode = surf the wave (ride momentum)
+#   - Range mode = fade the extremes (catch bounce)
+# Aktif HANYA saat 1H trend = SIDEWAYS, ADX 18-30 (ada movement tapi gak trending).
+# Quality cap: GOOD butuh score >= 10 (high bar — belum proven seperti trend mode).
+def _evaluate_range_mode(
+    df_main, rsi_data, bb, atr: float, adx_1h: float,
+    symbol: str = '', tf: str = '15m',
+    session_name: str = 'UNKNOWN', session_mod: int = 0,
+):
+    """Mean-reversion scalp untuk sideways market.
+
+    Trigger:
+      - 1H trend SIDEWAYS (ADX 18-30, EMA tidak aligned)
+      - Price touch BB upper/lower
+      - RSI extreme (>65 short / <35 long)
+      - Reversal wick (lower wick >= body untuk LONG; upper wick >= body untuk SHORT)
+      - Previous candle confirms reversal direction
+
+    Output: signal dict compatible dengan generate_scalping_signal output.
+    """
+    if df_main is None or len(df_main) < 5:
+        return None
+    if rsi_data is None or bb is None or atr is None or atr <= 0:
+        return None
+
+    # Path C (2026-05-05): whitelist 4 coin proven only.
+    # Backtest 60d/15coin show: BNB +12R, DOGE +14R, ETH +11R, APT +3R = profit.
+    # TAO/WLD/TRUMP/ORDI/ZEC blow-off (fake reversal) → -50R combined.
+    # Range mode HANYA di coin major likuid + lower volatility profile.
+    RANGE_WHITELIST = {'BNB', 'DOGE', 'ETH', 'APT'}
+    clean_sym = (symbol or '').upper().replace('USDT', '').replace('_', '')
+    if clean_sym not in RANGE_WHITELIST:
+        logger.debug(f"[{symbol}] RANGE SKIP: not in range whitelist")
+        return None
+
+    # Range mode aktif HANYA di ADX moderate.
+    # ADX <18 = dead market (no movement) → skip.
+    # ADX >=30 = trending → biarkan trend mode handle (kalau lolos detect_trend_state).
+    if not (18 <= adx_1h < 30):
+        logger.debug(f"[{symbol}] RANGE SKIP: ADX {adx_1h:.0f} not in range zone (18-30)")
+        return None
+
+    c_open = float(df_main['open'].iloc[-1])
+    c_high = float(df_main['high'].iloc[-1])
+    c_low = float(df_main['low'].iloc[-1])
+    c_close = float(df_main['close'].iloc[-1])
+    body = abs(c_close - c_open)
+    upper_wick = c_high - max(c_open, c_close)
+    lower_wick = min(c_open, c_close) - c_low
+
+    p_open = float(df_main['open'].iloc[-2])
+    p_close = float(df_main['close'].iloc[-2])
+
+    price = c_close
+    bb_upper = float(bb['upper'])
+    bb_middle = float(bb['middle'])
+    bb_lower = float(bb['lower'])
+    bb_width = bb_upper - bb_lower
+    bb_width_pct = (bb_width / price * 100) if price > 0 else 0
+
+    # Path C: BB width min 1.5% (was 1.0%) — butuh ruang lebih lebar untuk
+    # mean reversion supaya RR1 > 1.0 lebih achievable
+    if bb_width_pct < 1.5:
+        logger.debug(f"[{symbol}] RANGE SKIP: BB too tight ({bb_width_pct:.2f}%)")
+        return None
+
+    rsi = rsi_data['rsi']
+
+    # Path C: deep extreme only — RSI <25 / >75 (was <35/>65).
+    # Wick ratio >=2x body (was 1x) — strong reversal candle wajib.
+    long_at_lower = c_low <= bb_lower * 1.005
+    long_rsi_extreme = rsi < 25
+    long_bull_close = c_close > c_open
+    long_wick_ok = body > 0 and lower_wick >= body * 2.0
+    long_prev_bear = p_close < p_open
+    long_signal = (long_at_lower and long_rsi_extreme and long_bull_close
+                   and long_wick_ok and long_prev_bear)
+
+    short_at_upper = c_high >= bb_upper * 0.995
+    short_rsi_extreme = rsi > 75
+    short_bear_close = c_close < c_open
+    short_wick_ok = body > 0 and upper_wick >= body * 2.0
+    short_prev_bull = p_close > p_open
+    short_signal = (short_at_upper and short_rsi_extreme and short_bear_close
+                    and short_wick_ok and short_prev_bull)
+
+    if not (long_signal or short_signal):
+        logger.debug(f"[{symbol}] RANGE SKIP: no extreme reversal "
+                     f"(price={price:.4g}, BB=[{bb_lower:.4g},{bb_upper:.4g}], "
+                     f"RSI={rsi:.0f})")
+        return None
+
+    direction = 'LONG' if long_signal else 'SHORT'
+
+    score = 0
+    kills = 0
+    reasons = [f"RANGE mode: ADX {adx_1h:.0f} sideways + BB extreme reversal"]
+
+    score += 3
+    reasons.append(f"BB {'lower' if direction == 'LONG' else 'upper'} touch (price {price:.4g})")
+
+    if direction == 'LONG':
+        if rsi < 30:
+            score += 3
+            reasons.append(f"RSI deeply oversold ({rsi:.0f})")
+        else:
+            score += 2
+            reasons.append(f"RSI oversold ({rsi:.0f})")
+    else:
+        if rsi > 70:
+            score += 3
+            reasons.append(f"RSI deeply overbought ({rsi:.0f})")
+        else:
+            score += 2
+            reasons.append(f"RSI overbought ({rsi:.0f})")
+
+    wick_size = lower_wick if direction == 'LONG' else upper_wick
+    wick_ratio = wick_size / max(body, 1e-9)
+    if wick_ratio >= 2.0:
+        score += 3
+        reasons.append(f"Strong reversal wick ({wick_ratio:.1f}x body)")
+    else:
+        score += 2
+        reasons.append(f"Reversal wick ({wick_ratio:.1f}x body)")
+
+    # Path C: volume REQUIRED (was bonus). Reversal tanpa volume = lemah → skip.
+    try:
+        vol_check = check_volume_spike(df_main, 20, 1.2)
+        if not vol_check.get('spike'):
+            vol_ratio = vol_check.get('ratio', 0) if isinstance(vol_check, dict) else 0
+            logger.debug(f"[{symbol}] RANGE SKIP: volume too low ({vol_ratio:.1f}x < 1.2x)")
+            return None
+        ratio = vol_check.get('ratio', 0)
+        if ratio >= 2.0:
+            score += 3
+            reasons.append(f"Volume STRONG ({ratio:.1f}x)")
+        elif ratio >= 1.5:
+            score += 2
+            reasons.append(f"Volume confirms ({ratio:.1f}x)")
+        else:
+            score += 1
+            reasons.append(f"Volume OK ({ratio:.1f}x)")
+    except Exception:
+        # No volume data = unsafe entry
+        return None
+
+    # Tier 2: VWAP filter — range mode WAJIB sisi VWAP yang konsisten.
+    # LONG di lower BB harusnya juga BELOW VWAP (oversold relatif institutional)
+    # SHORT di upper BB harusnya juga ABOVE VWAP (overbought relatif institutional)
+    # Counter-VWAP = high prob fakeout → kill.
+    vwap_data = calc_vwap(df_main, period=96)
+    if vwap_data is not None:
+        if direction == 'LONG' and vwap_data['below']:
+            score += 2
+            reasons.append(f"Below VWAP {vwap_data['distance_pct']:.2f}% confirms oversold")
+        elif direction == 'SHORT' and vwap_data['above']:
+            score += 2
+            reasons.append(f"Above VWAP +{vwap_data['distance_pct']:.2f}% confirms overbought")
+        else:
+            kills += 1
+            reasons.append(f"⚠️ Reversal direction conflict with VWAP")
+
+    # Tier 2: StochRSI deep extreme bonus.
+    # Range mode WAJIB stoch extreme — kalau cuma "shallow" extreme = high fail rate.
+    sr = calc_stoch_rsi(df_main)
+    if sr is not None:
+        if direction == 'LONG':
+            if sr['deep_oversold'] and sr['rising']:
+                score += 3
+                reasons.append(f"StochRSI deep oversold + rising K={sr['k']:.0f}")
+            elif sr['oversold']:
+                score += 1
+                reasons.append(f"StochRSI oversold K={sr['k']:.0f}")
+            elif not sr['oversold']:
+                # Reversal tanpa StochRSI extreme = weak setup
+                kills += 1
+                reasons.append(f"⚠️ StochRSI not oversold K={sr['k']:.0f}")
+        else:  # SHORT
+            if sr['deep_overbought'] and sr['falling']:
+                score += 3
+                reasons.append(f"StochRSI deep overbought + falling K={sr['k']:.0f}")
+            elif sr['overbought']:
+                score += 1
+                reasons.append(f"StochRSI overbought K={sr['k']:.0f}")
+            elif not sr['overbought']:
+                kills += 1
+                reasons.append(f"⚠️ StochRSI not overbought K={sr['k']:.0f}")
+
+    if session_mod < 0:
+        score += session_mod
+        kills += 1
+        reasons.append(f"⚠️ Session {session_name} dead — penalty")
+
+    if kills >= 2:
+        return None
+
+    # Path C: cap quality di WAIT (risk auto-protect 0.5x).
+    # Mode RANGE belum live-validated, jadi tidak boleh GOOD walau score tinggi.
+    # Setelah 30+ live trade dengan WR 55%+, baru pertimbangkan promote ke GOOD.
+    # Score min 8 (sudah pre-filter ketat di atas — wajib volume + deep RSI + wick 2x).
+    if score < 8:
+        logger.debug(f"[{symbol}] RANGE SKIP: score {score} < 8 minimum")
+        return None
+    quality = 'WAIT'
+
+    if direction == 'LONG':
+        sl = bb_lower - 0.5 * atr
+        tp1 = bb_middle
+        tp2 = price + (bb_middle - price) * 1.5
+        tp3 = bb_upper
+    else:
+        sl = bb_upper + 0.5 * atr
+        tp1 = bb_middle
+        tp2 = price - (price - bb_middle) * 1.5
+        tp3 = bb_lower
+
+    risk = abs(price - sl)
+    if risk <= 0:
+        return None
+
+    sl_pct = risk / price * 100
+    if sl_pct > 3.5:
+        logger.debug(f"[{symbol}] RANGE SKIP: SL too wide ({sl_pct:.1f}%)")
+        return None
+
+    rr1 = abs(tp1 - price) / risk
+    rr2 = abs(tp2 - price) / risk
+    rr3 = abs(tp3 - price) / risk
+
+    # Range trades RR1 lower than trend (mean reversion = TP1 di middle = ~1R typical)
+    if rr1 < 1.0:
+        logger.debug(f"[{symbol}] RANGE SKIP: RR1 {rr1:.2f} too low")
+        return None
+
+    reasons.append(f"TP1={tp1:.4g} (BB mid) | TP2={tp2:.4g} | TP3={tp3:.4g}")
+
+    signal = {
+        'direction': direction,
+        'quality': quality,
+        'entry': price,
+        'sl': sl,
+        'tp1': tp1,
+        'tp2': tp2,
+        'tp3': tp3,
+        'rr1': round(rr1, 2),
+        'rr2': round(rr2, 2),
+        'rr': round(rr2, 2),
+        'rr_max': round(rr3, 2),
+        'sl_pct': round(sl_pct, 2),
+        'reasons': reasons,
+        'level_used': 'BB_LOWER' if direction == 'LONG' else 'BB_UPPER',
+        'confluence_score': score,
+        'kill_count': kills,
+        'entry_low': price,
+        'entry_high': price,
+        'tp': tp2,
+        'tp_max': tp3,
+        'level_price': price,
+        'engine': 'scalping_v4.3_range',
+        'strategy': 'mean_reversion_range',
+        'mode': 'RANGE',
+        'trend_state': 'SIDEWAYS',
+        'trend_strength': 0,
+        'pullback_quality': 'N/A',
+        'session': session_name,
+        'macro_4h_bias': 'NEUTRAL',
+        'adx_1h': round(adx_1h, 1),
+        'bb': {
+            'upper': round(bb_upper, 8),
+            'middle': round(bb_middle, 8),
+            'lower': round(bb_lower, 8),
+        },
+        'rsi_state': {
+            'value': round(rsi, 1),
+            'rising': rsi_data.get('rising', False),
+            'falling': rsi_data.get('falling', False),
+        },
+        'wedge': {'pattern': None, 'breakout': False, 'confidence': 0},
+        'candle_confirm': 'reversal_wick',
+        'volume_pressure': None,
+        'buy_pressure_pct': None,
+        'smc_bos': None,
+        'macd_state': {'cross_up': False, 'cross_down': False, 'histogram': 0},
+        'coin_confidence': 'range_mode',
+    }
+
+    logger.info(
+        f"[{symbol}] RANGE SIGNAL: {direction} {quality} | "
+        f"ADX={adx_1h:.0f} RSI={rsi:.0f} BB_extreme | "
+        f"score={score} entry={price} SL={sl:.4g} TP1={tp1:.4g}")
+
+    return signal
+
+
+# =========================================================
 #  10. V3 ENTRY POINT — Trend-Following Engine
 # =========================================================
 def generate_scalping_signal(
@@ -2459,20 +2860,24 @@ def generate_scalping_signal(
     #   SEI(-2.56R,54%WR), SOL(-2.90R,52%WR), SUI(-1.94R,58%WR),
     #   TRX(-0.55R,55%WR), XRP(-4.12R,49%WR)
     #   Dampak: 610→342 trade, WR 57.4%→63.7%, EV +0.079R→+0.233R
+    # 2026-05-06 Option 3: SELECTIVE WHITELIST — re-enabled dengan list dari coin
+    # learning Tier 2 backtest (60d/100coin). Drop coin negative EV (TAO/ARB/DOGE/dll).
+    # Keep coin HIGH/OK confidence dengan EV positive + sample size cukup.
+    #
+    # Source: Tier 2 backtest 2026-05-06 coin learning summary
+    # HIGH confidence (WR>55%, EV positive, sample sufficient)
+    # OK = WR borderline tapi EV positive (sample besar = data reliable)
     SCALP_COIN_WHITELIST = {
-        # Tier 1: Top performers (WR 65%+, EV >0.3R) — backtest validated
-        'BTC', 'ETH', 'WLD', 'TRUMP', 'TAO', 'ORDI',
-        # Tier 2: Solid performers (WR 58-65%, EV >0.1R)
-        'DOGE', 'APT', 'CRV', 'BNB', 'DOT', 'ADA',
-        # Tier 3: Borderline positive (EV >0, belum optimal)
-        'ARB', 'ZEC',
-        # Belum backtest (liquid, bisa di-test nanti): LINA, WAVES, ENJ, BIO,
-        # OCEAN, DGB, STRAX, WLFI, ENA, BNX, PAXG
-        'LINA', 'WAVES', 'ENJ', 'BIO', 'OCEAN', 'DGB', 'STRAX', 'WLFI',
-        'ENA', 'BNX', 'PAXG',
+        # CORE — sample besar (>100 trades), WR & EV positive consistent
+        'BTC', 'ETH', 'BNB', 'ADA', 'APT',
+        # HIGH PERFORMER — sample medium (>20 trades), WR 60%+
+        'CAKE', 'SEI', 'AVAX', 'MKR', 'VIRTUAL',
+        # PROMISING — sample kecil tapi EV strong, layak monitor
+        'TON', 'FET', 'JUP', 'TIA', 'XLM',
+        # WATCH — sample kecil, allowed untuk validate live
+        'ONDO', 'SUI', 'VET',
     }
     if symbol and symbol.upper().replace('USDT', '') not in SCALP_COIN_WHITELIST:
-        # Strip USDT suffix jika ada
         clean = symbol.upper().replace('USDT', '').replace('_', '')
         if clean not in SCALP_COIN_WHITELIST:
             logger.debug(f"[{symbol}] v5.9.2 SKIP: not in scalp whitelist")
@@ -2587,15 +2992,29 @@ def generate_scalping_signal(
 
     trend = detect_trend_state(df_1h, adx_1h)
 
+    # 2026-05-05: SIDEWAYS bukan hard skip lagi — fallback ke mode RANGE.
+    # Mode RANGE fade BB extremes saat sideways (mean reversion).
+    # Trend mode tetap priority kalau "clear trend" terdeteksi.
     if trend['state'] == 'SIDEWAYS':
-        logger.debug(f"[{symbol}] v4.3 SKIP: 1H {trend['reason']}")
-        return None
+        logger.debug(f"[{symbol}] v4.3 TREND SKIP: 1H {trend['reason']} → trying RANGE mode")
+        range_signal = _evaluate_range_mode(
+            df_main=df_main, rsi_data=rsi_data, bb=bb, atr=atr,
+            adx_1h=adx_1h, symbol=symbol, tf=tf,
+            session_name=session_name, session_mod=session_mod,
+        )
+        return range_signal  # None kalau RANGE juga skip
 
     # Adaptive trend strength threshold (per-coin)
+    # 2026-05-05: weak trend (strength 30-40) juga coba RANGE mode sebagai fallback
     if trend['strength'] < adapt_params['min_trend_strength']:
-        logger.debug(f"[{symbol}] v4.3 SKIP: trend strength "
-                     f"{trend['strength']} < {adapt_params['min_trend_strength']}")
-        return None
+        logger.debug(f"[{symbol}] v4.3 TREND SKIP: trend strength "
+                     f"{trend['strength']} < {adapt_params['min_trend_strength']} → trying RANGE mode")
+        range_signal = _evaluate_range_mode(
+            df_main=df_main, rsi_data=rsi_data, bb=bb, atr=atr,
+            adx_1h=adx_1h, symbol=symbol, tf=tf,
+            session_name=session_name, session_mod=session_mod,
+        )
+        return range_signal
 
     # --- STEP 1.5: 4H MACRO TREND (v4.3) ---
     # Trend 1H harus agree dengan macro 4H bias
@@ -2720,6 +3139,55 @@ def generate_scalping_signal(
     elif direction == 'SHORT' and htf_bull:
         kills += 1
         reasons.append("KILL: HTF 1H bullish (against trend)")
+
+    # --- BONUS: VWAP confirmation (Tier 2 2026-05-06) ---
+    # Institutional support/resistance — alignment dengan trend = bonus,
+    # counter-trend dari VWAP = warning (kemungkinan fakeout).
+    vwap_data = calc_vwap(df_main, period=96)
+    if vwap_data is not None:
+        if direction == 'LONG' and vwap_data['above']:
+            score += 2
+            reasons.append(f"Price above VWAP +{vwap_data['distance_pct']:.2f}% (institutional bullish)")
+        elif direction == 'SHORT' and vwap_data['below']:
+            score += 2
+            reasons.append(f"Price below VWAP {vwap_data['distance_pct']:.2f}% (institutional bearish)")
+        elif direction == 'LONG' and vwap_data['below']:
+            kills += 1
+            reasons.append(f"⚠️ LONG below VWAP {vwap_data['distance_pct']:.2f}% — counter institutional flow")
+        elif direction == 'SHORT' and vwap_data['above']:
+            kills += 1
+            reasons.append(f"⚠️ SHORT above VWAP +{vwap_data['distance_pct']:.2f}% — counter institutional flow")
+
+    # --- BONUS: StochRSI leading reversal (Tier 2 2026-05-06) ---
+    # Lebih sensitive dari RSI biasa. Detect deep extreme + momentum turn.
+    sr = calc_stoch_rsi(df_main)
+    if sr is not None:
+        if direction == 'LONG':
+            if sr['deep_oversold'] and sr['rising']:
+                score += 3
+                reasons.append(f"StochRSI deep oversold + rising K={sr['k']:.0f}")
+            elif sr['oversold'] and sr['rising']:
+                score += 2
+                reasons.append(f"StochRSI oversold + rising K={sr['k']:.0f}")
+            elif sr['cross_up'] and sr['k'] < 50:
+                score += 2
+                reasons.append(f"StochRSI cross up K={sr['k']:.0f}")
+            elif sr['overbought'] and sr['falling']:
+                kills += 1
+                reasons.append(f"⚠️ StochRSI overbought falling — LONG late entry")
+        else:  # SHORT
+            if sr['deep_overbought'] and sr['falling']:
+                score += 3
+                reasons.append(f"StochRSI deep overbought + falling K={sr['k']:.0f}")
+            elif sr['overbought'] and sr['falling']:
+                score += 2
+                reasons.append(f"StochRSI overbought + falling K={sr['k']:.0f}")
+            elif sr['cross_down'] and sr['k'] > 50:
+                score += 2
+                reasons.append(f"StochRSI cross down K={sr['k']:.0f}")
+            elif sr['oversold'] and sr['rising']:
+                kills += 1
+                reasons.append(f"⚠️ StochRSI oversold rising — SHORT late entry")
 
     # --- BONUS: Candle pattern --- DISABLED v5.8
     # Data 413 trades: Morning Star(-48%), Bullish Engulfing(-21.7%),
