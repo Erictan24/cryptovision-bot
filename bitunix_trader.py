@@ -1088,9 +1088,18 @@ class BitunixTrader:
                                 # Retry di loop berikutnya
 
                     else:
-                        # Cek apakah limit order masih pending
+                        # Cek apakah limit order masih pending — guard terhadap API error.
+                        # 2026-05-06 (bug IO): kalau pending check API error juga, dulu
+                        # bot anggap cancelled → stop monitor → TP1 ga ke-pasang.
                         pending = self._get("/api/v1/futures/trade/get_pending_orders",
                                            {"symbol": sym})
+                        if not pending or pending.get('code') != 0:
+                            logger.warning(
+                                f"⚠️ Limit monitor {sym}: pending check API error "
+                                f"(code={pending.get('code') if pending else 'none'}) — skip cycle"
+                            )
+                            continue
+
                         orders  = pending.get('data', {})
                         if isinstance(orders, dict):
                             order_list = orders.get('orderList', [])
@@ -1102,11 +1111,30 @@ class BitunixTrader:
                             for o in order_list
                         )
 
-                        if not still_pending and not pos:
-                            # Order sudah tidak ada dan posisi tidak terbuka
-                            # Kemungkinan order di-cancel manual atau expired
-                            logger.info(f"⚠️ Limit order {sym} tidak lagi pending — stop monitor")
-                            break
+                        if not still_pending:
+                            # Order sudah tidak pending. SEBELUM stop, verify pos via
+                            # check_position_status — jangan trust 'pos=None' dari awal
+                            # cycle (bisa API glitch). Kalau status=True, posisi filled
+                            # tapi missed — retry next cycle untuk place TP1.
+                            position_status = self.check_position_status(symbol)
+                            if position_status is True:
+                                logger.warning(
+                                    f"⚠️ Limit monitor {sym}: order filled but pos "
+                                    f"detection raced earlier — retry place TP1 next cycle"
+                                )
+                                continue
+                            elif position_status is False:
+                                logger.info(
+                                    f"⚠️ Limit order {sym} truly cancelled "
+                                    f"(no pending, no position) — stop monitor"
+                                )
+                                break
+                            else:
+                                logger.warning(
+                                    f"⚠️ Limit monitor {sym}: cannot verify cancel "
+                                    f"(API error) — skip cycle, retry"
+                                )
+                                continue
 
                 except Exception as e:
                     logger.debug(f"Limit entry monitor {sym} error: {e}")
