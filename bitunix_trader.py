@@ -1182,16 +1182,24 @@ class BitunixTrader:
                 sym      = sym_pair.replace('USDT', '')
                 side     = pos.get('side', '')
                 direction = 'LONG' if side in ('BUY', 'LONG') else 'SHORT'
-                entry    = float(pos.get('avgOpenPrice', 0))
+                bitunix_avg_entry = float(pos.get('avgOpenPrice', 0))
                 qty      = float(pos.get('qty', 0))
                 pos_id   = pos.get('positionId', '')
-
-                if not entry or sym in self._active_monitors:
-                    continue
 
                 saved = self._saved_positions.get(sym, {})
                 tp1   = float(saved.get('tp1', 0))
                 sl    = float(saved.get('sl', 0))
+
+                # 2026-05-07: PREFER signal entry (saved['entry']) over Bitunix avg.
+                # Reason: kalau ada partial fill / DCA, Bitunix avgEntry beda dari
+                # signal entry. Stage trailing math harus konsisten dengan signal
+                # (entry+sl_init+tp1+tp2 origin). Pakai Bitunix avg bikin Stage
+                # detection meleset (kasus LDO 2026-05-07).
+                signal_entry = float(saved.get('entry', 0))
+                entry = signal_entry if signal_entry > 0 else bitunix_avg_entry
+
+                if not entry or sym in self._active_monitors:
+                    continue
 
                 # Fallback TP1 kalau tidak tersimpan
                 if not tp1:
