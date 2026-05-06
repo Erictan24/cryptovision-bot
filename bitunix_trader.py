@@ -868,7 +868,8 @@ class BitunixTrader:
             return 0.0
 
     def _detect_stage_from_sl(self, entry: float, current_sl: float,
-                              tp1: float, direction: str) -> dict:
+                              tp1: float, direction: str,
+                              sl_initial: float = 0) -> dict:
         """
         Derive trailing stage state dari current SL price di exchange.
         Bukan dari file (yang bisa stale).
@@ -877,8 +878,13 @@ class BitunixTrader:
           < -0.1   : Stage 0 (SL masih di area loss original)
           -0.1 .. 0.4 : Stage 1 (BEP)
           0.4 .. 0.9  : Stage 2 (locked +0.5R)
-          0.9 .. 1.1  : Stage 3 (locked +1R, ~TP1 area)
-          > 1.1    : Stage 4 (runner trail)
+          0.9 .. 1.1  : Stage 3 (locked +1R)
+          > 1.1    : Stage 4 (runner trail) — disabled by default
+
+        2026-05-07: risk_dist pakai sl_initial (entry-SL_original), BUKAN
+        abs(tp1-entry) yang asumsi RR=1. Untuk RR > 1, asumsi salah bikin
+        stage detection meleset (kasus LDO RR 4.6: derive stuck di Stage 1
+        padahal harga sudah lewat +2R real).
         """
         state = {
             'bep_done': False,
@@ -889,7 +895,11 @@ class BitunixTrader:
         }
         if not current_sl or not entry or not tp1:
             return state
-        risk_dist = abs(tp1 - entry)
+        # Prefer sl_initial untuk hitung 1R yang akurat. Fallback ke tp1-entry.
+        if sl_initial and sl_initial > 0:
+            risk_dist = abs(entry - sl_initial)
+        else:
+            risk_dist = abs(tp1 - entry)
         if risk_dist <= 0:
             return state
 
@@ -1241,8 +1251,11 @@ class BitunixTrader:
                 # 2026-05-02): in-memory stage2/3 reset, lalu Stage 1 BEP block
                 # re-call move_sl_to_bep yang reset SL exchange ke entry.
                 exchange_sl = self._get_current_sl(sym, str(pos_id))
+                # 2026-05-07: pass sl_initial ke detect supaya risk_dist akurat.
+                _saved_for_init = self._saved_positions.get(sym.replace('USDT', ''), {})
+                _sl_init_for_detect = float(_saved_for_init.get('sl_initial', 0))
                 resumed_state = self._detect_stage_from_sl(
-                    entry, exchange_sl, tp1, direction
+                    entry, exchange_sl, tp1, direction, sl_initial=_sl_init_for_detect
                 )
 
                 # AUTO-PROMOTE saat resume: kalau price PERNAH lewat trigger Stage
@@ -1251,7 +1264,8 @@ class BitunixTrader:
                 # tadinya Stage 3 turun ke Stage 2 saat restart.
                 if resumed_state['stage2_done'] and not resumed_state['stage3_done']:
                     is_long_pos = direction == 'LONG'
-                    risk_dist = abs(tp1 - entry)
+                    # 2026-05-07: pakai sl_initial untuk akurasi RR, bukan tp1-entry
+                    risk_dist = abs(entry - _sl_init_for_detect) if _sl_init_for_detect > 0 else abs(tp1 - entry)
                     if risk_dist > 0:
                         extreme_24h = self._get_price_extreme_since(sym, 24, direction)
                         if extreme_24h > 0:
