@@ -1280,13 +1280,14 @@ class BitunixTrader:
                                         self._save_positions_to_file()
                                     except Exception as _ps3:
                                         logger.debug(f"Save auto-promote stage3 gagal: {_ps3}")
-                                    # Cek Stage 4 promote
+                                    # Cek Stage 4 promote — DISABLED 2026-05-07 (cap di Stage 3)
+                                    import os as _os_s4r
                                     trigger_4 = entry + risk_dist * 3.0 if is_long_pos else entry - risk_dist * 3.0
                                     ext_hit_s4 = (
                                         (is_long_pos and extreme_24h >= trigger_4) or
                                         (not is_long_pos and extreme_24h <= trigger_4)
                                     )
-                                    if ext_hit_s4:
+                                    if ext_hit_s4 and _os_s4r.getenv('STAGE4_RUNNER_TRAIL', '0') == '1':
                                         # Stage 4: trail SL = ekstrem ± 0.5R
                                         if is_long_pos:
                                             trail_sl_4 = extreme_24h - risk_dist * 0.5
@@ -1712,11 +1713,16 @@ class BitunixTrader:
                             else:
                                 logger.warning(f"⚠️ Stage3 SL gagal {sym}: {r3.get('msg')}")
 
-                    # ── Stage 4 (Opsi D 2026-04-24): Runner trail ──────
-                    # Setelah +3R dari entry, trail SL ketat = extreme ± 0.5R.
-                    # Tidak ada cap profit — SL naik setiap harga bergerak searah.
-                    # Exit hanya saat harga retrace 0.5R dari ekstrem.
-                    if stage3_done and risk_dist > 0:
+                    # ── Stage 4 DISABLED 2026-05-07 ──────────────────────
+                    # User request: cap trailing di Stage 3 (+1R lock).
+                    # Stage 4 (extreme - 0.5R trail) terlalu ketat — bikin SL stuck
+                    # dekat TP1 saat bot resume, exit prematur sebelum TP2.
+                    # Filosofi: setelah +1R locked, biarkan runner jalan ke TP2 tanpa
+                    # trailing tight. Kalau retrace, SL +1R sudah secure profit.
+                    # Re-enable dengan env var STAGE4_RUNNER_TRAIL=1 kalau perlu.
+                    import os as _os_s4
+                    if (_os_s4.getenv('STAGE4_RUNNER_TRAIL', '0') == '1'
+                            and stage3_done and risk_dist > 0):
                         if is_long:
                             extreme_px = max(extreme_px, current)
                         else:
@@ -1726,10 +1732,8 @@ class BitunixTrader:
                         stage4_active = (is_long and extreme_px >= trigger_4) or (not is_long and extreme_px <= trigger_4)
 
                         if stage4_active:
-                            # Trail SL = ekstrem ± 0.5R
                             if is_long:
                                 new_trail = extreme_px - risk_dist * 0.5
-                                # Hanya update kalau lebih tinggi dari SL terakhir
                                 should_move = stage4_sl is None or new_trail > stage4_sl + risk_dist * 0.2
                             else:
                                 new_trail = extreme_px + risk_dist * 0.5
@@ -1741,7 +1745,6 @@ class BitunixTrader:
                                 if r4.get('ok'):
                                     stage4_sl = new_trail
                                     logger.info(f"✅ Stage4 trail {sym} @ {new_trail:.6g}")
-                                    # Persist state — Stage 4 trail ke file + web
                                     try:
                                         clean_sym = sym.replace('USDT', '')
                                         saved = self._saved_positions.get(clean_sym, {})
