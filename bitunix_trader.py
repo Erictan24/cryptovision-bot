@@ -634,6 +634,7 @@ class BitunixTrader:
             'direction'  : direction,
             'entry'      : entry,
             'sl'         : sl,
+            'sl_initial' : sl,  # 2026-05-07: persist original SL untuk Stage trailing calc
             'tp1'        : tp1,
             'tp2'        : tp2,
             'qty'        : qty,
@@ -1572,7 +1573,21 @@ class BitunixTrader:
                     # Stage 1 (TP1 hit): SL → BEP (break even)
                     # Stage 2 (harga +1.5R dari entry): SL → +0.5R
                     # Stage 3 (harga +2.0R dari entry): SL → +1.0R (lock profit penuh)
-                    risk_dist = abs(tp1 - entry)   # 1R = jarak entry ke TP1
+                    # 2026-05-07 BUG FIX: risk_dist HARUS dari SL initial, BUKAN dari TP1.
+                    # Sebelumnya `risk_dist = abs(tp1 - entry)` salah asumsi RR=1.
+                    # Untuk swing trade RR 2-5x, Stage 2 trigger jadi terlalu jauh
+                    # (kasus LDO/VANA: trigger 0.396 instead of 0.371, never fired).
+                    try:
+                        clean_sym_rd = sym.replace('USDT', '')
+                        _saved_rd = self._saved_positions.get(clean_sym_rd, {})
+                        sl_initial = float(_saved_rd.get('sl_initial', 0))
+                        if sl_initial <= 0:
+                            # Legacy fallback: kalau belum ada sl_initial, pakai sl
+                            # saved (kalau bot belum shift = masih original).
+                            sl_initial = float(_saved_rd.get('sl', 0))
+                        risk_dist = abs(entry - sl_initial) if sl_initial > 0 else abs(tp1 - entry)
+                    except Exception:
+                        risk_dist = abs(tp1 - entry)
 
                     if tp1_hit and not bep_done and bep_attempts == 0:
                         bep_attempts += 1
