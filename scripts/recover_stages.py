@@ -106,7 +106,22 @@ for sym, pos in list(active.items()):
             pos["sl_initial"] = sl_init
         migrated_count += 1
 
-    # ── Step 2: hitung trigger +1.5R / +2R yang BENAR ────────────────
+    # ── Step 2: PRECONDITION — TP1 harus hit dulu sebelum Stage 2/3 ─
+    # Stage 2/3 secara semantik butuh TP1 hit (qty partial closed) dulu.
+    # Tanpa precondition ini, script bisa set SL di profit zone saat trade
+    # masih running negative — bahaya (kasus IO 2026-05-07: SL ke-set 0
+    # akibat crash, plus auto-promote berbasis extreme yang misleading).
+    initial_qty = float(pos.get("qty", 0))
+    actual_qty  = float(bitunix_pos.get("qty", 0))
+    qty_reduced = initial_qty > 0 and actual_qty < initial_qty * 0.7
+    tp1_hit_flag = bool(pos.get("tp1_hit", False))
+    if not (tp1_hit_flag or qty_reduced):
+        print(f"  SKIP Stage promotion: TP1 belum hit "
+              f"(initial_qty={initial_qty}, actual_qty={actual_qty}, tp1_hit={tp1_hit_flag})")
+        no_action_count += 1
+        continue
+
+    # ── Step 3: hitung trigger +1.5R / +2R yang BENAR ────────────────
     risk_dist = abs(entry - sl_init)
     if risk_dist <= 0:
         print(f"  SKIP: risk_dist invalid ({risk_dist})")
