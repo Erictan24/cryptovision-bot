@@ -1064,27 +1064,20 @@ class BitunixTrader:
                                 except Exception as _ppe:
                                     logger.debug(f"Push position (limit fill) error: {_ppe}")
 
-                                # Kirim notif ke Telegram
-                                if notify_fn:
-                                    try:
-                                        import asyncio
-                                        loop = asyncio.new_event_loop()
-                                        actual_entry = float(pos.get('avgOpenPrice', entry))
-                                        ico = "🟢" if direction == "LONG" else "🔴"
-                                        msg = (
-                                            "✅ LIMIT ENTRY KENA\n" +
-                                            "=" * 28 + "\n" +
-                                            ico + " " + sym + " " + direction + "\n" +
-                                            "Entry  : " + str(round(actual_entry, 8)) + "\n" +
-                                            "TP1    : " + str(round(tp1, 8)) + "\n" +
-                                            "TP2    : " + str(round(tp2, 8)) + "\n" +
-                                            "SL     : " + str(round(sl, 8)) + "\n\n" +
-                                            "👁️ TP1 monitor aktif — SL geser ke BEP saat TP1 kena"
-                                        )
-                                        loop.run_until_complete(notify_fn(msg))
-                                        loop.close()
-                                    except Exception:
-                                        pass
+                                # Kirim notif Telegram via HTTP direct (avoid asyncio bug)
+                                actual_entry = float(pos.get('avgOpenPrice', entry))
+                                ico = "🟢" if direction == "LONG" else "🔴"
+                                msg = (
+                                    "✅ LIMIT ENTRY KENA\n" +
+                                    "=" * 28 + "\n" +
+                                    ico + " " + sym + " " + direction + "\n" +
+                                    "Entry  : " + str(round(actual_entry, 8)) + "\n" +
+                                    "TP1    : " + str(round(tp1, 8)) + "\n" +
+                                    "TP2    : " + str(round(tp2, 8)) + "\n" +
+                                    "SL     : " + str(round(sl, 8)) + "\n\n" +
+                                    "👁️ TP1 monitor aktif — SL geser ke BEP saat TP1 kena"
+                                )
+                                self._tg_send(msg)
 
                                 # Start TP1 monitor untuk BEP
                                 actual_entry = float(pos.get('avgOpenPrice', entry))
@@ -1129,20 +1122,13 @@ class BitunixTrader:
                                     f"code={cancel_r.get('code')} msg={cancel_r.get('msg','')}"
                                 )
 
-                                # Notif Telegram
-                                if notify_fn and callable(notify_fn):
-                                    try:
-                                        import asyncio
-                                        loop = asyncio.new_event_loop()
-                                        loop.run_until_complete(notify_fn(
-                                            f"🚫 LIMIT CANCELLED — {sym}\n"
-                                            f"Reason: price reach TP2 ({extreme:.6g}) "
-                                            f"sebelum entry kena\n"
-                                            f"Setup invalid, opportunity lewat"
-                                        ))
-                                        loop.close()
-                                    except Exception:
-                                        pass
+                                # Notif Telegram via HTTP direct
+                                self._tg_send(
+                                    f"🚫 LIMIT CANCELLED — {sym}\n"
+                                    f"Reason: price reach TP2 ({extreme:.6g}) "
+                                    f"sebelum entry kena\n"
+                                    f"Setup invalid, opportunity lewat"
+                                )
 
                                 # Cleanup web (DELETE position) + remove dari saved
                                 try:
@@ -1701,19 +1687,12 @@ class BitunixTrader:
                             continue
 
                         # Notif TP1 kena — hanya sekali
-                        if notify_fn and callable(notify_fn):
-                            try:
-                                import asyncio
-                                loop = asyncio.new_event_loop()
-                                loop.run_until_complete(notify_fn(
-                                    "🎯 TP1 KENA — " + sym + "\n" +
-                                    "   Harga : " + str(round(current, 8)) + "\n" +
-                                    "   BEP   : " + str(round(entry, 8)) + "\n" +
-                                    "   50% profit aman, sisanya jalan ke TP2"
-                                ))
-                                loop.close()
-                            except Exception:
-                                pass
+                        self._tg_send(
+                            "🎯 TP1 KENA — " + sym + "\n" +
+                            "   Harga : " + str(round(current, 8)) + "\n" +
+                            "   BEP   : " + str(round(entry, 8)) + "\n" +
+                            "   50% profit aman, sisanya jalan ke TP2"
+                        )
 
                     # ── Stage 2: harga +1.5R dari entry → SL ke +0.5R ────
                     if bep_done and not stage2_done and risk_dist > 0:
@@ -1737,18 +1716,11 @@ class BitunixTrader:
                                     self._patch_position_state(clean_sym, sl=sl_lock_2)
                                 except Exception as _se:
                                     logger.debug(f"Save stage2 state gagal: {_se}")
-                                if notify_fn and callable(notify_fn):
-                                    try:
-                                        import asyncio
-                                        loop = asyncio.new_event_loop()
-                                        loop.run_until_complete(notify_fn(
-                                            "📈 TRAILING SL STAGE 2 — " + sym + "\n" +
-                                            "   Harga : " + str(round(current, 8)) + "\n" +
-                                            "   SL baru: " + str(round(sl_lock_2, 8)) + " (+0.5R terkunci)"
-                                        ))
-                                        loop.close()
-                                    except Exception:
-                                        pass
+                                self._tg_send(
+                                    "📈 TRAILING SL STAGE 2 — " + sym + "\n" +
+                                    "   Harga : " + str(round(current, 8)) + "\n" +
+                                    "   SL baru: " + str(round(sl_lock_2, 8)) + " (+0.5R terkunci)"
+                                )
                             else:
                                 logger.warning(f"⚠️ Stage2 SL gagal {sym}: {r2.get('msg')}")
 
@@ -1774,19 +1746,12 @@ class BitunixTrader:
                                     self._patch_position_state(clean_sym, sl=sl_lock_3)
                                 except Exception as _se:
                                     logger.debug(f"Save stage3 state gagal: {_se}")
-                                if notify_fn and callable(notify_fn):
-                                    try:
-                                        import asyncio
-                                        loop = asyncio.new_event_loop()
-                                        loop.run_until_complete(notify_fn(
-                                            "🚀 TRAILING SL STAGE 3 — " + sym + "\n" +
-                                            "   Harga : " + str(round(current, 8)) + "\n" +
-                                            "   SL baru: " + str(round(sl_lock_3, 8)) + " (+1R terkunci)\n" +
-                                            "   Profit +1R sudah aman apapun yang terjadi!"
-                                        ))
-                                        loop.close()
-                                    except Exception:
-                                        pass
+                                self._tg_send(
+                                    "🚀 TRAILING SL STAGE 3 — " + sym + "\n" +
+                                    "   Harga : " + str(round(current, 8)) + "\n" +
+                                    "   SL baru: " + str(round(sl_lock_3, 8)) + " (+1R terkunci)\n" +
+                                    "   Profit +1R sudah aman apapun yang terjadi!"
+                                )
                             else:
                                 logger.warning(f"⚠️ Stage3 SL gagal {sym}: {r3.get('msg')}")
 
@@ -1833,19 +1798,12 @@ class BitunixTrader:
                                         self._patch_position_state(clean_sym, sl=new_trail)
                                     except Exception as _se:
                                         logger.debug(f"Save stage4 state gagal: {_se}")
-                                    if notify_fn and callable(notify_fn):
-                                        try:
-                                            import asyncio
-                                            loop = asyncio.new_event_loop()
-                                            r_locked = abs(new_trail - entry) / risk_dist
-                                            loop.run_until_complete(notify_fn(
-                                                "🏃 RUNNER TRAIL — " + sym + "\n" +
-                                                "   Ekstrem: " + str(round(extreme_px, 8)) + "\n" +
-                                                "   SL baru: " + str(round(new_trail, 8)) + f" (+{r_locked:.1f}R terkunci)"
-                                            ))
-                                            loop.close()
-                                        except Exception:
-                                            pass
+                                    r_locked = abs(new_trail - entry) / risk_dist
+                                    self._tg_send(
+                                        "🏃 RUNNER TRAIL — " + sym + "\n" +
+                                        "   Ekstrem: " + str(round(extreme_px, 8)) + "\n" +
+                                        "   SL baru: " + str(round(new_trail, 8)) + f" (+{r_locked:.1f}R terkunci)"
+                                    )
 
                 except Exception as e:
                     logger.debug(f"Monitor {sym} error: {e}")
@@ -1993,9 +1951,7 @@ class BitunixTrader:
                                     f"Hasil  : {'SL setelah BEP' if bep_done else 'SL'}\n"
                                     f"PnL    : -${abs(last_pnl):.2f} USDT"
                                 )
-                            loop = asyncio.new_event_loop()
-                            loop.run_until_complete(notify_fn(msg))
-                            loop.close()
+                            self._tg_send(msg)
 
                             # Kirim explainer post (siap copy ke channel) jika trade WIN
                             if last_pnl > 0:
@@ -2006,9 +1962,7 @@ class BitunixTrader:
                                         stage="TP3+" if stage3_done else "TP2"
                                     )
                                     if explainer:
-                                        loop2 = asyncio.new_event_loop()
-                                        loop2.run_until_complete(notify_fn(explainer))
-                                        loop2.close()
+                                        self._tg_send(explainer)
                                 except Exception as _xe:
                                     logger.debug(f"Explainer error: {_xe}")
                         except Exception as _ne:
@@ -2407,6 +2361,55 @@ class BitunixTrader:
         import hmac as _hmac, hashlib as _hl
         bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
         return _hmac.new(bot_token.encode(), symbol.encode(), _hl.sha256).hexdigest()
+
+    def _tg_send(self, msg: str) -> bool:
+        """Kirim Telegram notif via HTTP requests langsung (bukan asyncio).
+
+        2026-05-08: replace pattern asyncio.new_event_loop() di background
+        thread yang error 'Event loop is closed'. Per memory feedback_notify_threading.md.
+        Best-effort, fail-silent. Return True kalau minimal 1 chat berhasil.
+        """
+        try:
+            import json as _json
+            bot_token = os.getenv('TELEGRAM_BOT_TOKEN', '')
+            if not bot_token:
+                return False
+            # Read chat_ids dari data/chat_ids.json
+            try:
+                chat_ids_path = os.path.join('data', 'chat_ids.json')
+                with open(chat_ids_path) as f:
+                    chat_ids = _json.load(f)
+                if not isinstance(chat_ids, list):
+                    chat_ids = [chat_ids]
+            except Exception:
+                chat_ids = []
+            # Tambah ADMIN_CHAT_ID dari env kalau ada (selalu kirim ke admin)
+            admin_id = os.getenv('ADMIN_CHAT_ID', '')
+            if admin_id:
+                try:
+                    aid = int(admin_id)
+                    if aid not in chat_ids:
+                        chat_ids.append(aid)
+                except ValueError:
+                    pass
+            if not chat_ids:
+                return False
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            ok_count = 0
+            for cid in chat_ids:
+                try:
+                    r = requests.post(url, json={
+                        "chat_id": cid,
+                        "text"   : msg,
+                    }, timeout=5)
+                    if r.status_code < 400:
+                        ok_count += 1
+                except Exception:
+                    pass
+            return ok_count > 0
+        except Exception as e:
+            logger.debug(f"_tg_send error: {e}")
+            return False
 
     def _web_url(self) -> str:
         return os.getenv('WEB_URL', 'https://cryptovision-web.vercel.app')
