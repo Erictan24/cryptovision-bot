@@ -1102,6 +1102,61 @@ class BitunixTrader:
                                 # Retry di loop berikutnya
 
                     else:
+                        # 2026-05-08: AUTO-CANCEL kalau price PERNAH reach TP2 sebelum
+                        # entry kena. Setup sudah invalid — opportunity lewat. Cancel
+                        # supaya gak nyangkut LIMIT yang useless.
+                        try:
+                            elapsed_hours = max(elapsed / 3600, 1)
+                            extreme = self._get_price_extreme_since(sym, int(elapsed_hours) + 1, direction)
+                            tp2_reached = (
+                                (direction == 'LONG' and extreme > 0 and extreme >= tp2)
+                                or (direction == 'SHORT' and extreme > 0 and extreme <= tp2)
+                            )
+                            if tp2_reached:
+                                logger.info(
+                                    f"🚫 LIMIT {sym}: price reach TP2 ({extreme} vs tp2={tp2}) "
+                                    f"sebelum entry — auto-cancel"
+                                )
+                                # Cancel via Bitunix API
+                                cancel_body = {"symbol": sym, "orderId": str(order_id)}
+                                cancel_r = self._post("/api/v1/futures/trade/cancel_orders",
+                                                      {"symbol": sym, "orderList": [{"orderId": str(order_id)}]})
+                                if not cancel_r or cancel_r.get('code') != 0:
+                                    # Try alternative endpoint format
+                                    cancel_r = self._post("/api/v1/futures/trade/cancel_orders", cancel_body)
+                                logger.info(
+                                    f"✅ Cancel LIMIT {sym} orderId={order_id}: "
+                                    f"code={cancel_r.get('code')} msg={cancel_r.get('msg','')}"
+                                )
+
+                                # Notif Telegram
+                                if notify_fn and callable(notify_fn):
+                                    try:
+                                        import asyncio
+                                        loop = asyncio.new_event_loop()
+                                        loop.run_until_complete(notify_fn(
+                                            f"🚫 LIMIT CANCELLED — {sym}\n"
+                                            f"Reason: price reach TP2 ({extreme:.6g}) "
+                                            f"sebelum entry kena\n"
+                                            f"Setup invalid, opportunity lewat"
+                                        ))
+                                        loop.close()
+                                    except Exception:
+                                        pass
+
+                                # Cleanup web (DELETE position) + remove dari saved
+                                try:
+                                    clean_sym_c = sym.replace('USDT', '')
+                                    self._delete_position_from_web(clean_sym_c)
+                                    self._patch_signal_status(clean_sym_c, 'cancelled')
+                                    self._remove_saved_position(clean_sym_c)
+                                except Exception as _ce:
+                                    logger.debug(f"Cancel cleanup error: {_ce}")
+
+                                break  # exit monitor loop
+                        except Exception as _ace:
+                            logger.debug(f"Auto-cancel check error: {_ace}")
+
                         # Cek apakah limit order masih pending — guard terhadap API error.
                         # 2026-05-06 (bug IO): kalau pending check API error juga, dulu
                         # bot anggap cancelled → stop monitor → TP1 ga ke-pasang.
