@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
-"""Record 3 closed trades (LDO/VANA/IP) dengan user-specified outcome.
+"""Fix label LDO/VANA/IP — bot auto-pushed dengan status salah, user koreksi.
 
 Per user 2026-05-10:
-- LDO closed 05-07 → TP1 (bukan TP2)
-- VANA closed 05-07 → TP2 (correct)
-- IP closed 05-10 → TP1 (bukan TP2)
+- LDO closed → label web salah (TP2), HARUSNYA TP1
+- VANA closed → label web TP2 (CORRECT, skip)
+- IP closed → label web salah (TP2), HARUSNYA TP1
 
 Workflow:
-1. Read active_positions.json untuk signal data per coin
-2. Fetch Bitunix history untuk realizedPNL real
-3. Compute pnl_r = realizedPNL / risk_amount
-4. Add ke trade_history.json dengan status user-specified
-5. Remove dari active_positions.json
-6. POST ke web /api/trades + DELETE position
+1. DELETE entry web /api/trades untuk LDO + IP (clear yang label salah)
+2. POST fresh dengan status TP1_HIT + pnl_r computed dari Bitunix realizedPNL
+3. Sync local trade_history.json (add entries kalau belum ada)
+4. Remove dari active_positions.json (closed)
+5. VANA biarin (label sudah benar)
 """
 import os
 import sys
@@ -37,11 +36,13 @@ ACTIVE_POS_FILE = ROOT / "data" / "active_positions.json"
 TRADE_HIST_FILE = ROOT / "data" / "trade_history.json"
 ENV  = ROOT / ".env"
 
-# User-specified outcomes
+# (symbol, target_status, action)
+# action: 'fix_label' = DELETE old web + POST new
+#         'sync_local' = add local kalau belum ada (sudah benar di web)
 TARGETS = [
-    ("LDO",  "TP1_HIT"),
-    ("VANA", "TP2_HIT"),
-    ("IP",   "TP1_HIT"),
+    ("LDO",  "TP1_HIT", "fix_label"),
+    ("VANA", "TP2_HIT", "sync_local"),
+    ("IP",   "TP1_HIT", "fix_label"),
 ]
 
 env_vars = {}
@@ -57,7 +58,7 @@ web_url = env_vars.get("WEB_URL", "https://cryptovision-web.vercel.app")
 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 for f in [ACTIVE_POS_FILE, TRADE_HIST_FILE]:
     if f.exists():
-        backup = f.with_suffix(f"{f.suffix}.bak_userclose_{ts}")
+        backup = f.with_suffix(f"{f.suffix}.bak_relabel_{ts}")
         backup.write_bytes(f.read_bytes())
         print(f"Backup: {backup.name}")
 print()
@@ -68,7 +69,6 @@ trader = BitunixTrader()
 
 
 def fetch_bitunix_close(sym: str):
-    """Get latest closed position dari Bitunix history."""
     data = trader._get('/api/v1/futures/position/get_history_positions',
                        {'symbol': sym + 'USDT', 'limit': 5})
     if not data or data.get('code') != 0:
@@ -83,14 +83,14 @@ def fetch_bitunix_close(sym: str):
     return positions[0] if positions else None
 
 
-for sym, target_status in TARGETS:
-    print(f"=== {sym} → {target_status} ===")
+for sym, target_status, action in TARGETS:
+    print(f"=== {sym} → {target_status} ({action}) ===")
 
-    # Read signal data dari active_positions
     pos = active.get(sym)
     if not pos:
-        print(f"  ERROR: {sym} not in active_positions.json — skip")
-        continue
+        print(f"  WARN: {sym} not in active_positions.json — try fetch from saved data anyway")
+        # Continue with empty pos data — fetch from Bitunix only
+        pos = {}
 
     direction = pos.get("direction", "LONG")
     entry     = float(pos.get("entry", 0))
@@ -102,70 +102,50 @@ for sym, target_status in TARGETS:
     strategy  = pos.get("_strategy", "swing")
     opened_at = pos.get("opened_at", "")
 
-    # Fetch realizedPNL dari Bitunix
     bitunix_record = fetch_bitunix_close(sym)
     if not bitunix_record:
-        print(f"  ERROR: no Bitunix history for {sym} — skip")
+        print(f"  ERROR: no Bitunix history — skip")
         continue
 
     pnl_usd = float(bitunix_record.get('realizedPNL', 0) or 0)
     mtime_ms = int(bitunix_record.get('mtime', 0) or 0)
     closed_at = datetime.fromtimestamp(mtime_ms / 1000).strftime('%Y-%m-%d %H:%M:%S') if mtime_ms else ''
 
-    # Compute pnl_r
     risk_amount = abs(entry - sl_init) * qty if (entry and sl_init and qty) else 0
     if risk_amount > 0:
         pnl_r = round(pnl_usd / risk_amount, 2)
     else:
-        # Fallback: estimate from sign
         pnl_r = 1.0 if pnl_usd > 0 else (-1.0 if pnl_usd < 0 else 0)
 
-    # Determine outcome label & exit_price
     if target_status == "TP2_HIT":
-        outcome = "PROFIT"
-        exit_p = tp2
+        outcome, exit_p = "PROFIT", tp2
     elif target_status == "TP1_HIT":
-        outcome = "PROFIT"
-        exit_p = tp1
+        outcome, exit_p = "PROFIT", tp1
     elif target_status == "BEP":
-        outcome = "BEP"
-        exit_p = entry
-    else:  # SL_HIT
-        outcome = "LOSS"
-        exit_p = sl_init
-
-    next_id = max((t.get('id', 0) for t in history), default=0) + 1
-    closed_entry = {
-        "id"         : next_id,
-        "symbol"     : sym,
-        "direction"  : direction,
-        "quality"    : quality,
-        "entry"      : entry,
-        "sl"         : sl_init,
-        "tp1"        : tp1,
-        "tp2"        : tp2,
-        "confluence" : pos.get("confluence", pos.get("score", 0)),
-        "rr1"        : 1.0,
-        "rr2"        : float(pos.get("rr", 2.0)),
-        "timestamp"  : opened_at,
-        "status"     : target_status,
-        "result_pnl" : pnl_r,
-        "closed_at"  : closed_at,
-    }
-    history.append(closed_entry)
+        outcome, exit_p = "BEP", entry
+    else:
+        outcome, exit_p = "LOSS", sl_init
 
     print(f"  PnL Bitunix: ${pnl_usd:+.4f}")
     print(f"  PnL R      : {pnl_r:+.2f}R")
-    print(f"  Status     : {target_status}")
     print(f"  Closed at  : {closed_at}")
+    print(f"  Action     : {action}")
 
-    # Remove dari active
-    if sym in active:
-        del active[sym]
-        print(f"  LOCAL: removed dari active_positions.json")
-
-    # POST web
     secret = hmac.new(token.encode(), sym.encode(), hashlib.sha256).hexdigest()
+
+    # ── 1. fix_label: DELETE old entry di web ────────────────────
+    if action == "fix_label":
+        try:
+            r = requests.delete(f"{web_url}/api/trades",
+                                params={"symbol": sym, "secret": secret,
+                                        "hours": "10000", "limit": "5"},
+                                timeout=10)
+            print(f"  WEB DELETE old trade: status={r.status_code}")
+        except Exception as e:
+            print(f"  WEB DELETE error: {e}")
+        time.sleep(0.2)
+
+    # ── 2. POST trade dengan status correct ──────────────────────
     body = {
         "symbol"     : sym,
         "direction"  : direction,
@@ -189,22 +169,55 @@ for sym, target_status in TARGETS:
         print(f"  WEB POST trade: status={r.status_code}")
     except Exception as e:
         print(f"  WEB POST error: {e}")
+    time.sleep(0.2)
 
-    # DELETE position dari web
+    # ── 3. DELETE position di web (kalau masih show running) ─────
     try:
         r = requests.delete(f"{web_url}/api/positions",
                             params={"symbol": sym, "secret": secret}, timeout=10)
         print(f"  WEB DELETE position: status={r.status_code}")
     except Exception as e:
-        print(f"  WEB DELETE error: {e}")
+        print(f"  WEB DELETE position error: {e}")
 
-    time.sleep(0.3)
+    # ── 4. Sync local trade_history kalau belum ada ──────────────
+    existing = [h for h in history if h.get('symbol') == sym and h.get('closed_at') == closed_at]
+    if existing:
+        # Update existing entry status
+        for h in existing:
+            h['status'] = target_status
+            h['result_pnl'] = pnl_r
+        print(f"  LOCAL: updated existing entry status → {target_status}")
+    else:
+        # Add new entry
+        next_id = max((t.get('id', 0) for t in history), default=0) + 1
+        history.append({
+            "id"         : next_id,
+            "symbol"     : sym,
+            "direction"  : direction,
+            "quality"    : quality,
+            "entry"      : entry,
+            "sl"         : sl_init,
+            "tp1"        : tp1,
+            "tp2"        : tp2,
+            "confluence" : pos.get("confluence", pos.get("score", 0)),
+            "rr1"        : 1.0,
+            "rr2"        : float(pos.get("rr", 2.0)),
+            "timestamp"  : opened_at,
+            "status"     : target_status,
+            "result_pnl" : pnl_r,
+            "closed_at"  : closed_at,
+        })
+        print(f"  LOCAL: added new entry status={target_status}")
+
+    # ── 5. Remove dari active ────────────────────────────────────
+    if sym in active:
+        del active[sym]
+        print(f"  LOCAL: removed from active_positions")
+
     print()
 
-# Save local
 ACTIVE_POS_FILE.write_text(json.dumps(active, indent=2))
 TRADE_HIST_FILE.write_text(json.dumps(history, indent=2))
 
-print(f"Saved local files.")
 print(f"trade_history.json: {len(history)} entries total")
 print(f"active_positions.json: {len(active)} entries remaining")
