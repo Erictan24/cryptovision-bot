@@ -483,7 +483,19 @@ class BitunixTrader:
 
         # ── Hitung qty dari nominal risk (USD tetap) ─────────
         if qty is None:
-            risk_per_unit = abs(entry - sl)
+            # 2026-05-11 FIX BUG 1: kalau entry=0 (MARKET order indicator),
+            # fetch current price dari Bitunix untuk qty calc. Sebelumnya
+            # risk_per_unit = abs(0 - sl) = sl_price = huge → qty rounds to 0.
+            # Effect: SEMUA scalp signal (yang pakai entry=0 untuk MARKET)
+            # blocked dengan "Qty terlalu kecil: 0.0".
+            if entry == 0:
+                entry_for_calc = self._get_current_price(sym)
+                if entry_for_calc <= 0:
+                    return {'ok': False, 'msg': 'Gagal ambil current price untuk qty calc'}
+            else:
+                entry_for_calc = entry
+
+            risk_per_unit = abs(entry_for_calc - sl)
             if risk_per_unit <= 0:
                 return {'ok': False, 'msg': 'SL sama dengan entry — invalid'}
 

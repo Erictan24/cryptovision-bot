@@ -2508,6 +2508,255 @@ def _determine_scalp_quality_v43(score: int, kills: int,
 # =========================================================
 #  9.5 MODE RANGE — Mean-reversion fallback untuk sideways market
 # =========================================================
+# 2026-05-11 BREAKOUT mode — catch consolidation → trend transition
+# =========================================================
+# Theory: sideways market = price building energy in tight BB band.
+# Saat BB break + volume spike + strong candle = trend baru mulai.
+# Aktif saat:
+#   - 1H trend SIDEWAYS (no clear trend dari TREND mode)
+#   - BB width tight (consolidation indicator)
+#   - Last candle break BB upper/lower dengan close direction match
+# Filter ketat untuk avoid fakeout: body large + volume spike.
+def _evaluate_breakout_mode(
+    df_main, rsi_data, bb, atr: float, adx_1h: float,
+    symbol: str = '', tf: str = '15m',
+    session_name: str = 'UNKNOWN', session_mod: int = 0,
+):
+    """Catch consolidation → breakout transition.
+
+    Trigger:
+      - 1H trend SIDEWAYS (caller already verified)
+      - BB width tight (<2% of price = consolidation)
+      - Last candle: high > BB upper (LONG) OR low < BB lower (SHORT)
+      - Close direction match break (close > open for LONG break)
+      - Body strong (body/range ≥ 0.6)
+      - Volume spike ≥ 1.5x avg
+    """
+    if df_main is None or len(df_main) < 22:  # need 20 for BB + buffer
+        return None
+    if rsi_data is None or bb is None or atr is None or atr <= 0:
+        return None
+
+    # Same whitelist as TREND mode — 18 proven coins
+    BREAKOUT_WHITELIST = {
+        'BTC', 'ETH', 'BNB', 'ADA', 'APT',
+        'CAKE', 'SEI', 'AVAX', 'MKR', 'VIRTUAL',
+        'TON', 'FET', 'JUP', 'TIA', 'XLM',
+        'ONDO', 'SUI', 'VET',
+    }
+    clean_sym = (symbol or '').upper().replace('USDT', '').replace('_', '')
+    if clean_sym not in BREAKOUT_WHITELIST:
+        logger.debug(f"[{symbol}] BREAKOUT SKIP: not in whitelist")
+        return None
+
+    # Last candle
+    c_open = float(df_main['open'].iloc[-1])
+    c_high = float(df_main['high'].iloc[-1])
+    c_low = float(df_main['low'].iloc[-1])
+    c_close = float(df_main['close'].iloc[-1])
+    body = abs(c_close - c_open)
+    candle_range = c_high - c_low
+
+    price = c_close
+    bb_upper = float(bb['upper'])
+    bb_middle = float(bb['middle'])
+    bb_lower = float(bb['lower'])
+    bb_width = bb_upper - bb_lower
+    bb_width_pct = (bb_width / price * 100) if price > 0 else 0
+
+    # 1. BB width TIGHT (consolidation indicator)
+    # Wider = no consolidation = not breakout setup
+    if bb_width_pct >= 2.5:
+        logger.debug(f"[{symbol}] BREAKOUT SKIP: BB width {bb_width_pct:.2f}% not tight (consolidation absent)")
+        return None
+
+    # 2. Detect break direction
+    long_break = c_high > bb_upper and c_close > c_open  # high break + bullish close
+    short_break = c_low < bb_lower and c_close < c_open  # low break + bearish close
+
+    if not (long_break or short_break):
+        logger.debug(f"[{symbol}] BREAKOUT SKIP: no BB break")
+        return None
+
+    direction = 'LONG' if long_break else 'SHORT'
+
+    # 3. Body strength — strong candle, not doji
+    body_ratio = body / candle_range if candle_range > 0 else 0
+    if body_ratio < 0.55:
+        logger.debug(f"[{symbol}] BREAKOUT SKIP: weak candle body ratio {body_ratio:.2f}")
+        return None
+
+    # 4. Volume confirmation
+    try:
+        vol_check = check_volume_spike(df_main, 20, 1.5)
+        if not vol_check.get('spike'):
+            ratio = vol_check.get('ratio', 0) if isinstance(vol_check, dict) else 0
+            logger.debug(f"[{symbol}] BREAKOUT SKIP: volume {ratio:.1f}x < 1.5x")
+            return None
+        vol_ratio = vol_check.get('ratio', 0)
+    except Exception:
+        return None
+
+    # 5. Build score
+    score = 0
+    kills = 0
+    reasons = [f"BREAKOUT: BB squeeze release ({bb_width_pct:.2f}% width)"]
+
+    score += 3
+    reasons.append(f"BB break {direction} (close {price:.6g} {'>' if direction == 'LONG' else '<'} BB band)")
+
+    # Body strength
+    if body_ratio >= 0.75:
+        score += 3
+        reasons.append(f"Body STRONG {body_ratio:.2f}")
+    else:
+        score += 2
+        reasons.append(f"Body solid {body_ratio:.2f}")
+
+    # Volume
+    if vol_ratio >= 2.5:
+        score += 3
+        reasons.append(f"Volume STRONG {vol_ratio:.1f}x")
+    elif vol_ratio >= 2.0:
+        score += 2
+        reasons.append(f"Volume confirms {vol_ratio:.1f}x")
+    else:
+        score += 1
+        reasons.append(f"Volume OK {vol_ratio:.1f}x")
+
+    # Penetration depth — how far close beyond BB
+    if direction == 'LONG':
+        penetration_atr = (c_close - bb_upper) / atr if atr > 0 else 0
+    else:
+        penetration_atr = (bb_lower - c_close) / atr if atr > 0 else 0
+
+    if penetration_atr > 0.3:
+        score += 2
+        reasons.append(f"Strong penetration {penetration_atr:.2f}xATR")
+    elif penetration_atr > 0.1:
+        score += 1
+        reasons.append(f"Moderate penetration {penetration_atr:.2f}xATR")
+
+    # Session penalty
+    if session_mod < 0:
+        score += session_mod
+        kills += 1
+        reasons.append(f"⚠️ Session {session_name} dead — penalty")
+
+    if kills >= 2:
+        return None
+
+    # 6. Quality determination — BREAKOUT lebih conservative dari RANGE
+    # GOOD score >= 11 (high bar — fakeout protection)
+    # WAIT score >= 9
+    if kills == 0:
+        if score >= 11:
+            quality = 'GOOD'
+        elif score >= 9:
+            quality = 'WAIT'
+        else:
+            return None
+    else:
+        if score >= 9:
+            quality = 'WAIT'
+        else:
+            return None
+
+    # 7. SL/TP — BREAKOUT pakai ATR-based
+    # SL: di sisi pre-breakout (di balik BB band)
+    # TP1: 1.5x ATR direction
+    # TP2: 2.5x ATR
+    # TP3: 4x ATR (runner)
+    if direction == 'LONG':
+        sl = bb_middle - 0.5 * atr  # SL di middle band - buffer
+        tp1 = price + 1.5 * atr
+        tp2 = price + 2.5 * atr
+        tp3 = price + 4.0 * atr
+    else:
+        sl = bb_middle + 0.5 * atr
+        tp1 = price - 1.5 * atr
+        tp2 = price - 2.5 * atr
+        tp3 = price - 4.0 * atr
+
+    risk = abs(price - sl)
+    if risk <= 0:
+        return None
+
+    sl_pct = risk / price * 100
+    if sl_pct > 3.5:
+        logger.debug(f"[{symbol}] BREAKOUT SKIP: SL too wide ({sl_pct:.1f}%)")
+        return None
+
+    rr1 = abs(tp1 - price) / risk
+    rr2 = abs(tp2 - price) / risk
+    rr3 = abs(tp3 - price) / risk
+
+    if rr1 < 1.0:
+        logger.debug(f"[{symbol}] BREAKOUT SKIP: RR1 {rr1:.2f} too low")
+        return None
+
+    reasons.append(f"TP1={tp1:.4g} | TP2={tp2:.4g} | TP3={tp3:.4g}")
+
+    signal = {
+        'direction': direction,
+        'quality': quality,
+        'entry': price,
+        'sl': sl,
+        'tp1': tp1,
+        'tp2': tp2,
+        'tp3': tp3,
+        'rr1': round(rr1, 2),
+        'rr2': round(rr2, 2),
+        'rr': round(rr2, 2),
+        'rr_max': round(rr3, 2),
+        'sl_pct': round(sl_pct, 2),
+        'reasons': reasons,
+        'level_used': 'BB_BREAK',
+        'confluence_score': score,
+        'kill_count': kills,
+        'entry_low': price,
+        'entry_high': price,
+        'tp': tp2,
+        'tp_max': tp3,
+        'level_price': price,
+        'engine': 'scalping_v4.3_breakout',
+        'strategy': 'consolidation_breakout',
+        'mode': 'BREAKOUT',
+        'trend_state': 'SIDEWAYS',
+        'trend_strength': 0,
+        'pullback_quality': 'N/A',
+        'session': session_name,
+        'macro_4h_bias': 'NEUTRAL',
+        'adx_1h': round(adx_1h, 1),
+        'bb': {
+            'upper': round(bb_upper, 8),
+            'middle': round(bb_middle, 8),
+            'lower': round(bb_lower, 8),
+        },
+        'rsi_state': {
+            'value': round(rsi_data['rsi'], 1),
+            'rising': rsi_data.get('rising', False),
+            'falling': rsi_data.get('falling', False),
+        },
+        'wedge': {'pattern': None, 'breakout': True, 'confidence': 0},
+        'candle_confirm': 'breakout_candle',
+        'volume_pressure': None,
+        'buy_pressure_pct': None,
+        'smc_bos': None,
+        'macd_state': {'cross_up': False, 'cross_down': False, 'histogram': 0},
+        'coin_confidence': 'breakout_mode',
+    }
+
+    logger.info(
+        f"[{symbol}] BREAKOUT SIGNAL: {direction} {quality} | "
+        f"BB width {bb_width_pct:.2f}% body {body_ratio:.2f} vol {vol_ratio:.1f}x | "
+        f"score={score} entry={price} SL={sl:.4g} TP1={tp1:.4g}"
+    )
+
+    return signal
+
+
+# =========================================================
 # 2026-05-05: SaaS launch needs consistent signal volume.
 # Trend-following engine block 100% saat market sideways (ADX <25, no clear trend).
 # Mode RANGE fade BB extremes saat sideways → mean reversion ke BB middle.
@@ -2515,6 +2764,7 @@ def _determine_scalp_quality_v43(score: int, kills: int,
 # Filosofi:
 #   - Trend mode = surf the wave (ride momentum)
 #   - Range mode = fade the extremes (catch bounce)
+#   - Breakout mode = catch consolidation → trend transition
 # Aktif HANYA saat 1H trend = SIDEWAYS, ADX 18-30 (ada movement tapi gak trending).
 # Quality cap: GOOD butuh score >= 10 (high bar — belum proven seperti trend mode).
 def _evaluate_range_mode(
@@ -2542,6 +2792,12 @@ def _evaluate_range_mode(
     # Backtest 60d/15coin show: BNB +12R, DOGE +14R, ETH +11R, APT +3R = profit.
     # TAO/WLD/TRUMP/ORDI/ZEC blow-off (fake reversal) → -50R combined.
     # Range mode HANYA di coin major likuid + lower volatility profile.
+    # 2026-05-11 Final: ROLLBACK to 4 coin proven (BNB/DOGE/ETH/APT).
+    # Tested 3x semua loosen filter FAIL:
+    # - Approach A (expand 4→19 WAIT): WR 54.4%
+    # - Approach B (BREAKOUT mode): 1 trigger only
+    # - Approach D (expand 4→18 GOOD-only): WR 54.8%, DD 23R
+    # Pattern: RANGE strategy works for major coin only. CURRENT OPTIMAL.
     RANGE_WHITELIST = {'BNB', 'DOGE', 'ETH', 'APT'}
     clean_sym = (symbol or '').upper().replace('USDT', '').replace('_', '')
     if clean_sym not in RANGE_WHITELIST:
@@ -2718,13 +2974,17 @@ def _evaluate_range_mode(
         return None
     quality = 'WAIT'
 
+    # 2026-05-11 FIX BUG 2: SL harus SELALU di arah yang benar dari entry.
+    # Sebelumnya `sl = bb_lower - 0.5*atr` bisa di ATAS entry kalau price
+    # already below bb_lower + atr kecil (kasus BNB 05-08: SL 636.2 > entry 634.93).
+    # Pakai min/max untuk guarantee SL min 1 ATR jauh dari entry di arah yang benar.
     if direction == 'LONG':
-        sl = bb_lower - 0.5 * atr
+        sl = min(bb_lower - 0.5 * atr, price - 1.0 * atr)  # selalu di bawah price
         tp1 = bb_middle
         tp2 = price + (bb_middle - price) * 1.5
         tp3 = bb_upper
     else:
-        sl = bb_upper + 0.5 * atr
+        sl = max(bb_upper + 0.5 * atr, price + 1.0 * atr)  # selalu di atas price
         tp1 = bb_middle
         tp2 = price - (price - bb_middle) * 1.5
         tp3 = bb_lower
@@ -2877,7 +3137,11 @@ def generate_scalping_signal(
         # WATCH — sample kecil, allowed untuk validate live
         'ONDO', 'SUI', 'VET',
     }
-    if symbol and symbol.upper().replace('USDT', '') not in SCALP_COIN_WHITELIST:
+    # 2026-05-10: Env var SCALP_WHITELIST_ENABLED (default 1) — disable=0 untuk
+    # backtest tanpa whitelist (test apakah filter selain whitelist cukup).
+    import os as _os_wl
+    _whitelist_on = _os_wl.getenv('SCALP_WHITELIST_ENABLED', '1') == '1'
+    if _whitelist_on and symbol and symbol.upper().replace('USDT', '') not in SCALP_COIN_WHITELIST:
         clean = symbol.upper().replace('USDT', '').replace('_', '')
         if clean not in SCALP_COIN_WHITELIST:
             logger.debug(f"[{symbol}] v5.9.2 SKIP: not in scalp whitelist")
@@ -2997,6 +3261,8 @@ def generate_scalping_signal(
     # Trend mode tetap priority kalau "clear trend" terdeteksi.
     if trend['state'] == 'SIDEWAYS':
         logger.debug(f"[{symbol}] v4.3 TREND SKIP: 1H {trend['reason']} → trying RANGE mode")
+        # 2026-05-11: BREAKOUT mode disabled — backtest 60d cuma 1 signal,
+        # filter terlalu strict. Code helper tetap ada untuk future use.
         range_signal = _evaluate_range_mode(
             df_main=df_main, rsi_data=rsi_data, bb=bb, atr=atr,
             adx_1h=adx_1h, symbol=symbol, tf=tf,
