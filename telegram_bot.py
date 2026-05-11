@@ -2587,65 +2587,168 @@ class TelegramBot:
         # Jalankan sebagai asyncio task agar tidak block handler
         asyncio.create_task(_run_training())
 
-    async def cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Check open trades first
-        if self.engine:
-            self.tracker.check_trades(self.engine)
+    def _fetch_trades_from_web(self) -> list:
+        """Fetch closed trades dari Web API (single source of truth).
 
-        stats = self.tracker.get_stats()
-        if not stats:
-            await update.message.reply_text("Belum ada trade yang tercatat. Gunakan /signal untuk mulai.")
+        Return list of dict, atau [] kalau gagal. Caller bertanggung jawab fallback.
+        Web = Neon Postgres yang di-update real-time dari bot push HMAC POST.
+        """
+        try:
+            import requests as _req
+            web_url = os.getenv('WEB_URL', 'https://cryptovision-web.vercel.app')
+            r = _req.get(f"{web_url}/api/trades", timeout=8)
+            if r.status_code >= 400:
+                return []
+            data = r.json()
+            if not data.get('ok'):
+                return []
+            return data.get('trades', []) or []
+        except Exception as e:
+            logger.debug(f"_fetch_trades_from_web error: {e}")
+            return []
+
+    def _classify_outcome(self, t: dict) -> str:
+        """Klasifikasi trade jadi TP2/TP1/BEP/SL berdasarkan pnl_r + flags.
+
+        Web kirim outcome string ('PROFIT'/'LOSS'/'TP1'). Re-classify
+        biar tampilan konsisten dengan dashboard web (TP2/TP1/BEP/SL).
+        """
+        try:
+            pnl_r = float(t.get('pnl_r') or 0)
+        except Exception:
+            pnl_r = 0.0
+        outcome_raw = (t.get('outcome') or '').upper()
+        bep_done = bool(t.get('bep_done'))
+        if outcome_raw == 'TP2' or pnl_r >= 1.5:
+            return 'TP2'
+        if outcome_raw == 'TP1' or pnl_r >= 0.5:
+            return 'TP1'
+        if outcome_raw in ('BEP', 'BREAKEVEN') or (bep_done and abs(pnl_r) < 0.3):
+            return 'BEP'
+        if pnl_r > 0:
+            return 'TP1'  # PROFIT generic, tapi pnl > 0 → minimal TP1
+        return 'SL'
+
+    async def cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Performance dashboard — fetch dari Web API (single source)."""
+        trades = self._fetch_trades_from_web()
+        if not trades:
+            await update.message.reply_text(
+                "Gagal ambil data trade dari web. Coba lagi sebentar lagi atau buka https://cryptovision.id/dashboard/statistics"
+            )
             return
+
+        # Aggregate
+        total = len(trades)
+        wins = sum(1 for t in trades if float(t.get('pnl_r') or 0) > 0)
+        losses = sum(1 for t in trades if float(t.get('pnl_r') or 0) <= 0)
+        wr = (wins / total * 100) if total else 0.0
+
+        pnl_r_list = [float(t.get('pnl_r') or 0) for t in trades]
+        pnl_usd_list = [float(t.get('pnl_usd') or 0) for t in trades]
+        total_pnl_r = sum(pnl_r_list)
+        total_pnl_usd = sum(pnl_usd_list)
+        avg_win_r = (sum(r for r in pnl_r_list if r > 0) / wins) if wins else 0.0
+        avg_loss_r = (sum(r for r in pnl_r_list if r <= 0) / losses) if losses else 0.0
+
+        # Distribusi outcome
+        from collections import Counter
+        dist = Counter(self._classify_outcome(t) for t in trades)
+
+        # Per quality
+        by_q = {}
+        for t in trades:
+            q = t.get('quality') or 'UNKNOWN'
+            by_q.setdefault(q, {'total': 0, 'wins': 0})
+            by_q[q]['total'] += 1
+            if float(t.get('pnl_r') or 0) > 0:
+                by_q[q]['wins'] += 1
+
+        # Per strategi (swing/scalp)
+        by_s = {}
+        for t in trades:
+            s = (t.get('strategy') or 'unknown').upper()
+            by_s.setdefault(s, {'total': 0, 'wins': 0, 'pnl_r': 0.0, 'pnl_usd': 0.0})
+            by_s[s]['total'] += 1
+            if float(t.get('pnl_r') or 0) > 0:
+                by_s[s]['wins'] += 1
+            by_s[s]['pnl_r'] += float(t.get('pnl_r') or 0)
+            by_s[s]['pnl_usd'] += float(t.get('pnl_usd') or 0)
+
+        # Best/worst
+        best = max(trades, key=lambda t: float(t.get('pnl_r') or 0))
+        worst = min(trades, key=lambda t: float(t.get('pnl_r') or 0))
 
         text = (
             f"PERFORMANCE DASHBOARD\n"
-            f"================================\n\n"
-            f"Total Trades: {stats['total_trades']}\n"
-            f"Open: {stats['open_trades']}\n\n"
-            f"Win: {stats['wins']} | Loss: {stats['losses']}\n"
-            f"WIN RATE: {stats['win_rate']}%\n\n"
-            f"Total PnL: {stats['total_pnl_r']:+.2f}R\n"
-            f"Avg Win: {stats['avg_win_r']:+.2f}R\n"
-            f"Avg Loss: {stats['avg_loss_r']:.2f}R\n\n"
+            f"================================\n"
+            f"(source: cryptovision.id)\n\n"
+            f"Total Trades: {total}\n"
+            f"Win: {wins} | Loss: {losses}\n"
+            f"WIN RATE: {wr:.1f}%\n\n"
+            f"Total PnL: {total_pnl_r:+.2f}R (${total_pnl_usd:+.2f})\n"
+            f"Avg Win: {avg_win_r:+.2f}R\n"
+            f"Avg Loss: {avg_loss_r:.2f}R\n\n"
+            f"Distribusi:\n"
+            f"  TP2: {dist.get('TP2', 0)} | TP1: {dist.get('TP1', 0)} | BEP: {dist.get('BEP', 0)} | SL: {dist.get('SL', 0)}\n\n"
         )
 
-        if stats['by_quality']:
+        if by_s:
+            text += "Per Strategi:\n"
+            for s, d in by_s.items():
+                wrs = (d['wins'] / d['total'] * 100) if d['total'] else 0
+                text += f"  {s}: {d['total']} trade, {wrs:.0f}% WR, {d['pnl_r']:+.2f}R (${d['pnl_usd']:+.2f})\n"
+            text += "\n"
+
+        if by_q:
             text += "Per Quality:\n"
-            for q, data in stats['by_quality'].items():
-                text += f"  {q}: {data['wr']}% WR ({data['wins']}/{data['total']})\n"
+            for q, d in by_q.items():
+                wrq = (d['wins'] / d['total'] * 100) if d['total'] else 0
+                text += f"  {q}: {wrq:.0f}% WR ({d['wins']}/{d['total']})\n"
             text += "\n"
 
         text += (
-            f"Best: {stats['best_coin']} ({stats['best_pnl']:+.2f}R)\n"
-            f"Worst: {stats['worst_coin']} ({stats['worst_pnl']:+.2f}R)"
+            f"Best: {best.get('symbol', '?')} ({float(best.get('pnl_r') or 0):+.2f}R)\n"
+            f"Worst: {worst.get('symbol', '?')} ({float(worst.get('pnl_r') or 0):+.2f}R)"
         )
         await update.message.reply_text(text)
 
     async def cmd_trades(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Check trades first
-        if self.engine:
-            self.tracker.check_trades(self.engine)
-
-        recent = self.tracker.get_recent(10)
-        if not recent:
-            await update.message.reply_text("Belum ada trade. Gunakan /signal untuk mulai.")
+        """Recent trades — fetch dari Web API (single source)."""
+        trades = self._fetch_trades_from_web()
+        if not trades:
+            await update.message.reply_text(
+                "Gagal ambil data trade dari web. Coba lagi sebentar lagi atau buka https://cryptovision.id/dashboard/history"
+            )
             return
 
-        p = self._p
-        text = "RECENT TRADES\n================================\n\n"
-        for t in recent:
-            status_icon = {
-                'OPEN': 'O', 'TP1_HIT': 'TP1', 'TP2_HIT': 'TP2',
-                'SL_HIT': 'SL', 'EXPIRED': 'EXP'
-            }.get(t['status'], '?')
+        # Sort by closed_at desc
+        def _sort_key(t):
+            return t.get('closed_at') or t.get('opened_at') or ''
+        recent = sorted(trades, key=_sort_key, reverse=True)[:10]
 
-            pnl = t['result_pnl']
-            pnl_str = f"{pnl:+.1f}R" if pnl != 0 else "0R"
-            ts = t['timestamp'][:16].replace('T', ' ')
+        p = self._p
+        text = "RECENT TRADES\n================================\n(source: cryptovision.id)\n\n"
+        for t in recent:
+            label = self._classify_outcome(t)
+            sym = t.get('symbol', '?')
+            side = t.get('direction', '?')
+            qual = t.get('quality', '?')
+            try:
+                entry = float(t.get('entry') or 0)
+                entry_str = p(entry)
+            except Exception:
+                entry_str = str(t.get('entry', '?'))
+            try:
+                pnl_r = float(t.get('pnl_r') or 0)
+                pnl_str = f"{pnl_r:+.1f}R"
+            except Exception:
+                pnl_str = "?"
+            ts = (t.get('closed_at') or t.get('opened_at') or '')[:16].replace('T', ' ')
 
             text += (
-                f"  [{status_icon}] {t['symbol']} {t['direction']} {t['quality']}\n"
-                f"    Entry: {p(t['entry'])} | {pnl_str}\n"
+                f"  [{label}] {sym} {side} {qual}\n"
+                f"    Entry: {entry_str} | {pnl_str}\n"
                 f"    {ts}\n\n"
             )
         await update.message.reply_text(text)
