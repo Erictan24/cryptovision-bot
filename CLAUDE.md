@@ -1,45 +1,68 @@
 # CryptoVision Bot — Context untuk Claude Code
 
 ## Identitas Bot
-Bot trading crypto swing trader (1H + 4H) untuk Bitunix Futures.
+Bot trading crypto **DUAL ENGINE** untuk Bitunix Futures:
+- **SWING** trader: 1H + 4H timeframe
+- **SCALP** trader: 15m + 5m timeframe (real money sejak 2026-04-25)
+
 Username Telegram: CryptoVisionID
 Folder: C:\Users\erict\OneDrive\crypto_bot_v2
+VPS: IDCloudHost Singapore (Rp 87k/bln), path `/home/eric/cryptovision-bot`
+Website: cryptovision.id (Vercel + Neon Postgres)
 
 ## Stack
 - Python, Telegram Bot API, Bitunix Futures API
 - Data: Binance Futures (primary), CryptoCompare (fallback)
+- Web: Next.js + Neon Postgres + Vercel
+- Comms: HMAC auth bot → web push
 
 ## File Utama
-- main.py → entry point, auto scan 30 menit
-- trading_engine.py → analisa + signal + semua filter + wrapper ke signal_generator
-- signal_generator.py → SINGLE SOURCE OF TRUTH scoring & filter (semua filter WR 60% di sini)
-- telegram_bot.py → Telegram interface + auto trade
-- bitunix_trader.py → koneksi Bitunix, BEP, TP1 monitor
-- chart_generator.py → generate chart PNG untuk signal
-- clean_signal.py → signal engine Fib+4H+candle (fallback kalau main signal None)
-- news_filter.py → economic calendar filter
-- candle_patterns.py → 35+ candlestick pattern
-- chart_pattern_signals.py → 14 chart pattern
-- momentum_detector.py → 4 momentum setup
 
-## Konfigurasi Trading
-- Risk per trade: $3 flat
+### Swing Engine
+- main.py → entry point, auto scan 30 menit
+- trading_engine.py → wrapper signal_generator
+- signal_generator.py → SINGLE SOURCE OF TRUTH scoring swing
+- telegram_bot.py → Telegram interface + auto trade + correlation filter
+- bitunix_trader.py → koneksi Bitunix, stage trailing SL, TP1 monitor, place_order
+- chart_generator.py → chart PNG signal
+- news_filter.py → economic calendar filter
+
+### Scalp Engine
+- scalping_signal_engine.py → generate_scalping_signal() RANGE + TREND mode
+- scalp_live_runner.py → live scan + execute scalp signal
+- scalp_outcome_monitor.py → track TP1/TP2/SL outcome scalp trade
+- data/scalp_coin_params.json → per-coin scalp config
+- data/scalp_trades.db → SQLite scalp trade history
+
+## Konfigurasi Trading (Status 2026-05-11)
+
+### Swing
+- TRADE_RISK_USD: $1 dari .env (validasi mode)
+- Quality tier: GOOD (1.0x), MODERATE (0.7x), WAIT (0.6x)
 - Daily loss limit: $15
 - Max posisi: 5
 - Leverage: 10x
-- Timeframe: 1H (main), 4H (HTF), 15m (LTF trigger)
+
+### Scalp
+- TRADE_RISK_USD: $0.25 base
+- Quality tier: GOOD (1.0x = $0.25), WAIT (0.6x = $0.15)
+- RANGE mode: cap WAIT only (by design)
+- Whitelist 18 proven coin (mode RANGE deploy 2026-05-06)
+- Scan tiap 15 menit, TF 15m main + 5m trigger
 
 ## Instruksi Komunikasi
 - Selalu gunakan Bahasa Indonesia
 - Jelaskan setiap perubahan: Apa → Kenapa → Dampak ke bot
 - Bahasa sederhana untuk trader, bukan programmer
+- Backtest dulu sebelum push config change (WAJIB)
 
 ## Target
-- WR 60%+ (tercapai: 63.8-67.3% di backtest)
-- EV positif per trade (+0.56R terakhir)
-- Volume signal: target 30+/bulan (sedang ditingkatkan)
+- WR 60%+ swing (tercapai backtest 62.7-67.3%)
+- WR 60%+ scalp RANGE (backtest 70.7%, 174 trades / 60d)
+- EV positif per trade
+- Volume: swing 20-30/bulan + scalp 5-10/hari
 
-## Arsitektur Signal (setelah upgrade April 2026)
+## Arsitektur Signal SWING
 
 ### Signal Flow
 ```
@@ -50,66 +73,103 @@ analyze_coin()
       → _apply_rejection_gate()  wajib candle rejection
       → HTF Alignment Gate    GOOD wajib HTF EMA/CHoCH
       → Whale Flow Filter     block LONG saat HTF bearish tanpa reversal sign
-  → generate_clean_signal()  [clean_signal.py — FALLBACK, kalau main=None]
-      → filter WR 60% diterapkan di analyze_coin sebelum dipakai
-      → quality di-cap ke MODERATE
+  → clean_signal DISABLED (fallback bermasalah, WR 32%)
 ```
 
-### Filter WR 60% (4 Fix dari Post-Mortem 179 trades)
-1. **Fix #1 — Accumulation Kill** (signal_generator.py, _score_direction)
-   - LONG + fase Accumulation = KILL factor (dulu: +1 score)
-   - Data: 100% LONG SL rate di Accumulation tanpa Markup
-   - Hanya MARKUP phase yang jadi green light untuk LONG
+### Filter WR 60% Swing
+1. **Accumulation Kill** — LONG + fase Accumulation = KILL
+2. **BOS 1H Wajib HTF** — BOS 1H tanpa HTF BOS searah = KILL (false breakout)
+3. **RSI Buffer Zone** — rsi_extreme_low=32, rsi_extreme_high=68
+4. **ADX Precision Filter** — block ADX 35-44 (death zone) dan ADX >=50 (zero)
 
-2. **Fix #2 — BOS 1H Wajib HTF** (signal_generator.py, _score_direction)
-   - BOS 1H tanpa HTF BOS searah = KILL factor (false breakout)
-   - Data: BOS 1H saja WR 22% (7 SL dari 9 closed trades)
-   - BOS 1H + HTF BOS baru dikasih score
-
-3. **Fix #3 — RSI Buffer Zone** (config.py)
-   - rsi_extreme_low: 30→32, rsi_extreme_high: 70→68
-   - Block near-extreme (jebakan "hampir oversold/overbought")
-
-4. **Fix #5 — ADX Precision Filter** (config.py + signal_generator.py)
-   - Block ADX 35-44 (death zone WR 20-33%) dan ADX >=50 (WR 0%)
-   - Allow ADX 45-49 (sweet spot kedua, WR 75%)
-   - Sweet spot utama: ADX 25-34 (WR 67-72%)
-
-### Config Penting (SIGNAL_PARAMS)
-- score_good: 20 | score_moderate: 17
-- max_kills_good: 0 | max_kills_moderate: 1
+### Config Penting Swing (SIGNAL_PARAMS)
+- score_good: 18 | score_moderate: 17
+- max_kills_good: 1 | max_kills_moderate: 1
 - rsi_extreme_low: 32 | rsi_extreme_high: 68
 - adx_death_zone: 35-44 | adx_too_extreme: 50
 - tp1_rr_min: 1.2 | tp2_rr_min: 2.0
+- auto_trade min_quality: MODERATE (turun dari GOOD, data live AvgR -0.09 vs +0.03)
 
-## Bug Kritis yang Diperbaiki (April 2026)
+## Arsitektur Signal SCALP (Mode RANGE + TREND)
 
-### Bug #1 — Scoring Engine Ganda
-trading_engine.py punya generate_entry_signal internal 800 baris dengan scoring hardcoded
-(GOOD=score>=7) yang bypass semua SIGNAL_PARAMS. Dihapus, diganti wrapper ke signal_generator.py.
+### Whitelist (18 coin proven, RANGE_WHITELIST 4 coin)
+Filter selektif setelah forensic 7 fix. Top 50 by volume disabled (WR drop ke 60% dari 70%).
 
-### Bug #2 — EMA Cross Bonus Double-Counting
-analyze_coin kasih +8/+15 bonus score untuk EMA cross, padahal EMA sudah discore di
-_score_direction(). Bikin score melewati hard_reject 24. Dihapus.
+### RANGE Mode (mean-reversion)
+- Trigger: price extreme BB + RSI overbought/oversold + reversal wick
+- ADX < 18-30 (range condition)
+- SL: `min(bb_lower - 0.5*atr, price - 1.0*atr)` (LONG safety bound)
+- TP1 = mid BB, TP2 = opposite BB band
+- Quality cap WAIT only
+- **RANGE_WHITELIST 4 coin: BNB / DOGE / ETH / APT** (major only)
+- Filosofi: mean reversion works for major coin only — altcoin lain blow-off lebih sering daripada bounce
 
-### Bug #3 — BacktestEngine Missing Attributes
-_whale_cache, _SIGNAL_LOCK_HOURS, _ZONE_PERSIST_HOURS, _WHALE_TTL tidak ada.
-90% scan error = semua backtest sebelumnya TIDAK VALID.
+### TREND Mode (pullback continuation)
+- ADX > 25 + EMA aligned
+- Pullback ke EMA21/50 + bounce confirmation
+- Quality: GOOD atau WAIT
 
-### Bug #4 — Per-Coin Config Melonggarkan Threshold
-per_coin_config override score_good=6 dari profil lama, bypass filter baru.
-Fix: max(override, base) — per-coin hanya boleh memperketat.
+### Stage Trailing SL (bitunix_trader.py)
+- Stage 1 (TP1 hit): SL → BEP
+- Stage 2 (+0.5R): SL → entry + 0.25R
+- Stage 3 (+1R): SL → entry + 0.5R
+- Stage 4: DISABLED via env (Insiden LDO SL ketat 2026-05-08)
 
-### Bug #5 — report.py Unicode Crash Windows
-Karakter non-ASCII crash di cp1252. Diganti ASCII.
+## Bug Kritis (April 2026) — Swing
+1. Scoring Engine Ganda di trading_engine.py — Dihapus, wrapper saja
+2. EMA Cross Bonus Double-Counting — Dihapus
+3. BacktestEngine Missing Attributes — Fixed
+4. Per-Coin Config Melonggarkan Threshold — Fix max(override, base)
+5. report.py Unicode Crash Windows — ASCII only
+6. Clean Signal Override Tanpa Filter — Disabled definitif
 
-### Bug #6 — Clean Signal Override Tanpa Filter
-Clean_signal scoring 0-100 bypass filter WR 60%.
-Fix: re-enable sebagai fallback saja + filter diterapkan di analyze_coin.
+## Bug Kritis (Mei 2026) — Scalp & Trading
 
-## Penemuan Penting dari Data
+### Bug A — DNS Error Anggap Closed (2026-05-06)
+API `_get()` swallow DNS error → return empty list → bot anggap posisi closed.
+**Fix:** `check_position_status()` 3-state Optional[bool] (True/False/None), retry 3x.
+Insiden PIPPIN, fix commit a5130f1.
 
-### WR by Score Range (179 trades baseline)
+### Bug B — risk_dist Salah (2026-05-07)
+Stage 2/3 trigger pakai `abs(tp1 - entry)` instead of `abs(entry - sl_initial)`.
+Trade RR > 1 → Stage 2 trigger jauh meleset.
+**Fix:** persist sl_initial saat trade open, derive risk_dist dari situ.
+
+### Bug C — Resume Pakai Bitunix avgEntry (2026-05-07)
+Restart monitor pakai avgEntry Bitunix (post DCA/partial) bukan signal entry asli.
+**Fix:** prefer `saved['entry']` dari local trades.
+
+### Bug D — LIMIT Order TP1 Monitor False SL (2026-05-03)
+TP1 monitor start untuk LIMIT belum filled → post-mortem detect "SL hit" palsu.
+**Fix:** check `order_type == 'MARKET'` sebelum start monitor.
+
+### Bug E — Outcome Label Tidak Akurat (2026-05-03)
+Label TP1/TP2/BEP/SL derive dari pnl_r threshold (bias). Bot tracking stage flag accurate.
+**Fix:** outcome derive dari tp2_hit / tp1_hit / bep_done. Web prioritas outcome string, pnl_r fallback legacy.
+
+### Bug F — place_order qty=0 untuk MARKET (2026-05-11) ⭐ KRITIKAL
+**Root cause 0 scalp signal 3 minggu:**
+- scalp_live_runner pass `entry=0` ke place_order = MARKET intent
+- `risk_per_unit = abs(entry - sl) = abs(0 - sl)` = HUGE → qty=0 → reject
+- ALL scalp signal sejak deploy 2026-05-06 silent fail
+**Fix:** detect entry=0 → fetch current price Bitunix sebelum qty calc.
+Commit 9c87594.
+
+### Bug G — RANGE LONG SL Above Entry (2026-05-11) ⭐
+Edge case BB extreme: `sl = bb_lower - 0.5*atr` masih > entry untuk LONG.
+**Fix:** `sl = min(bb_lower - 0.5*atr, price - 1.0*atr)` untuk LONG.
+Commit 9c87594.
+
+### Bug H — Bitunix set_leverage Silent Fail
+set_leverage WAJIB include marginCoin USDT. Bug sejak awal — bot pakai leverage default Bitunix bukan TRADE_LEVERAGE env. Fix commit 510a8c8.
+
+### Bug I — Telegram asyncio Event Loop Closed
+Background thread notif pakai `asyncio.new_event_loop()` → conflict dengan Telegram event loop.
+**Fix:** `_tg_send()` helper pakai HTTP requests direct.
+
+## Penemuan Penting Swing (179 trades baseline)
+
+### WR by Score Range
 - Score 18-19: WR 64-67% (sweet spot)
 - Score 20: WR 44% (anomali, sampel kecil)
 - Score 21: WR 86-100% (terbaik!)
@@ -129,132 +189,135 @@ Fix: re-enable sebagai fallback saja + filter diterapkan di analyze_coin.
 - ADX 50+: WR 0% (diblock)
 
 ### LONG vs SHORT
-- LONG: WR 71-86% (setelah Accumulation kill, sangat selektif)
-- SHORT: WR 57-64% (lebih banyak volume)
-- LONG kena SL 35% lebih cepat dari SHORT (avg 8 bars vs 12.3 bars)
+- LONG: WR 71-86% (setelah Accumulation kill)
+- SHORT: WR 57-64% (volume lebih banyak)
+- LONG kena SL 35% lebih cepat dari SHORT
 
 ### Faktor Jebakan (lebih sering di SL)
 - Accumulation phase + LONG (100% SL rate!)
 - BOS 1H tanpa HTF BOS (WR 22%)
-- Volume confirmation bias
-- Engulfing tanpa konteks
 
 ### Faktor Juara (lebih sering di TP2)
-- Pin Bar (+11% bias ke TP2)
+- Pin Bar (+11% bias)
 - RSI Divergence (+10% bias)
-- HTF BOS (+7% bias)
-- HTF EMA aligned (+7% bias)
+- HTF BOS / HTF EMA aligned (+7% bias each)
 
 ## Backtest Results History
 
-### Baseline (sebelum fix)
-- 179 trades, WR 54.5%, EV +0.44R
+### Swing
+| Setup | Trades | WR | EV | Volume |
+|-------|--------|------|------|--------|
+| Baseline (sebelum fix) | 179 | 54.5% | +0.44R | - |
+| 4 Fix 1h only | 97 | 67.3% | +0.62R | 16/bln |
+| 1h+4h Opsi B ADX | 126 | 63.8-65.6% | +0.56R | 21/bln |
+| max_kills=1 + score=18 | - | naik semua metric | naik | naik |
+| zone_margin 0.6→1.0 (05-02) | 265 | 60.0% | +0.54R | +20% |
 
-### Setelah 4 Fix (1h only, 30 coin, 180 hari)
-- 97 trades, WR 67.3%, EV +0.62R, 16/bulan
+### Scalp
+| Setup | Trades | WR | EV | Note |
+|-------|--------|------|------|------|
+| Volume upgrade (04-29) | 164 | 65.2% | +0.19R | 60d/50coin |
+| RANGE mode + whitelist 18 (05-06) | 174 | 70.7% | +0.29R | 60d, +50R |
 
-### Setelah + 4h TF + Opsi B ADX (1h+4h, 30 coin, 180 hari)
-- 126 trades, WR 63.8-65.6%, EV +0.56R, 21/bulan
-- 1h: WR 64.6%, 4h: WR 60.0%
+### Loosening Filter Test (2026-05-10/11) — SEMUA GAGAL
+4 approach tested, semua jelek vs baseline (WR 70.7% / EV +0.29R / +50R):
+| Approach | Trades | WR | EV | Verdict |
+|---|---|---|---|---|
+| ADX threshold 18→15 | 178 | 69.7% | +0.28R | Marginal worse, **rollback** |
+| Disable whitelist + Top 50 vol | 190 | **60.0%** | +0.10R | **WAY worse** |
+| RANGE WAIT 4→19 coin | 272 | 54.4% | +0.14R | FAIL |
+| RANGE GOOD-only 4→18 | 270 | 54.8% | +0.08R | DD 23R, FAIL HARD |
 
-### TP1 Enforcement (reject kalau resistance dekat)
-- TERLALU KETAT — 13 trades saja (WR 82% tapi tidak usable)
-- REVERTED — TP1 tetap di-cap oleh resistance terdekat
+**Rule absolut:** EXPAND filter / LOOSEN threshold = QUALITY DROP. Engine optimal at current config. Kalau market sideways → TUNGGU, bukan loosen.
 
-### Clean Signal Fallback (GAGAL)
-- Re-enable clean_signal sebagai fallback: 1154 signal tapi WR hanya 32% (vs main 62.7%)
-- Filter superfisial di analyze_coin tidak cukup — scoring Fib 0-100 fundamentally beda
-- DINONAKTIFKAN DEFINITIF — butuh rewrite total agar pakai _score_direction()
+### Live Scalp Trade Stats (metode baru, 16 closed sampai 2026-05-11)
+- Trades: BTC, PIPPIN, BASED, LINK, ALGO, VANA (TP2) + ARB×2, RENDER, UNI, OPG, OP, TIA, LDO, IO, IP (TP1/SL)
+- WR: 68.75%
+- Net PnL: +11.78R
+- **Engine PROVEN** — bukan WR backtest yang teori
 
-### Volume Issue
-- 20 signal/bulan — penyebab: signal hanya trigger saat harga DI zona S&R + rejection
-- generate_limit_signal gagal: level matching terlalu rigid (0 candidate dari 13 level)
-- Volume unlock butuh rewrite clean_signal pakai scoring yang sama (Prioritas 5, bulan depan)
+### TP1 Enforcement & Clean Signal — REVERTED
+- TP1 enforcement: 13 trades only (terlalu ketat)
+- Clean signal fallback: WR 32% (bypass filter), DISABLED definitif
 
-## Fitur Live Trading (April 2026)
-
-### Trailing Stop — SUDAH ADA di bitunix_trader.py
-3 stage otomatis di start_tp1_monitor():
-- Stage 1 (TP1 hit): SL → BEP (break even)
-- Stage 2 (harga +1.5R): SL → entry + 0.5R (lock profit)
-- Stage 3 (harga +2.0R): SL → entry + 1.0R (lock profit penuh)
-Note: Backtest TIDAK simulasikan trailing ini. WR live bisa lebih tinggi dari backtest.
-
-### Correlation Filter — BARU (telegram_bot.py)
-Cluster-aware anti-correlation:
-- Max 3 posisi arah sama (general)
-- Max 1 posisi per cluster coin (L1: ETH/SOL/AVAX/APT/SUI/SEI/TON/DOT/ATOM, L2: ARB/OP/POL, DEFI: INJ/PENDLE/FET/UNI, MEME: DOGE/WLD/BLUR)
-- Mencegah cluster loss (misal 3 L1 coin semua SHORT → 1 saja)
-
-### Risk Scaling — FIXED
-- Dulu GOOD hardcode $1, IDEAL $2 (terlalu konservatif, terbalik)
-- Sekarang semua tier pakai risk_usd dari .env ($3 default)
-- Compound growth: naikkan TRADE_RISK_USD di .env seiring balance naik
+## Web Dashboard (cryptovision.id)
+- `/dashboard/news` — Berita Crypto + Kalender Ekonomi bilingual
+- `/dashboard/signals` — live signal feed
+- `/dashboard/positions` — Bitunix REST poll 3s
+- `/dashboard/history` — trade history (TP1/TP2/BEP/SL)
+- `/dashboard/statistics` — WR/PnL aggregates
+- HMAC auth bot → web push (signal/position/history)
+- Welcome email via Resend
+- Mobile responsive
 
 ## Hal yang Tidak Boleh Dilakukan
-- JANGAN tambah scoring engine baru di trading_engine.py — semua lewat signal_generator.py
-- JANGAN override SIGNAL_PARAMS dengan hardcoded value
-- JANGAN kasih score ke Accumulation phase untuk LONG (itu jebakan)
-- JANGAN percaya BOS 1H tanpa HTF BOS (false breakout)
-- JANGAN entry saat ADX 35-44 (death zone) atau ADX >= 50
-- JANGAN force TP1 minimum kalau resistance dekat — reject 90% signal
-- JANGAN per-coin config melonggarkan threshold (hanya boleh memperketat)
-- JANGAN re-enable clean_signal sebelum rewrite pakai _score_direction()
+- JANGAN tambah scoring engine baru di trading_engine.py
+- JANGAN override SIGNAL_PARAMS dengan hardcoded
+- JANGAN kasih score ke Accumulation+LONG (jebakan)
+- JANGAN entry ADX 35-44 atau ADX >= 50
+- JANGAN per-coin config melonggarkan threshold
+- JANGAN re-enable clean_signal sebelum rewrite
+- JANGAN push config tanpa backtest dulu
+- JANGAN naikin TRADE_RISK_USD sebelum bulan ini profit terkonfirmasi (volume/WR naik bukan justifikasi)
+- JANGAN trust empty position response — wajib retry 3x (DNS error masking)
+- JANGAN pass entry=0 ke place_order tanpa MARKET intent jelas
+- JANGAN POST web data tanpa pikir display logic web side (label threshold)
+- JANGAN multi-script tumpang tindih — bikin 1 idempotent script
+- JANGAN loosen scalp filter (ADX, whitelist, RANGE coin) — 4 test 2026-05-10/11 PROVEN drop WR 10pp+
+- JANGAN derive outcome label dari pnl_r threshold — pakai outcome string (tp2_hit/tp1_hit/bep_done flag bot)
+- JANGAN compute pnl_usd on-the-fly untuk historical sync — hardcode dari audit Bitunix
+- JANGAN re-enable Stage 4 trailing tanpa rewrite (extreme-0.5R terlalu ketat, LDO incident)
 
-## Pencapaian (April 2026)
+## Pencapaian Sampai 2026-05-11
 
-### Sebelum Upgrade
-- WR: 35-42% (rugi)
-- EV: ~0R per trade
-- Filter saling tumpang tindih, banyak bug tersembunyi
-- Backtest tidak valid (90% scan error tidak terdeteksi)
+### Swing
+- WR backtest: 62.7-65.6%
+- EV: +0.51 sampai +0.56R per trade
+- Volume: 20-25 signal/bulan
+- Live validation jalan, paper-to-real money confirmed
 
-### Setelah Upgrade (2026-04-13)
-- **WR backtest: 62.7%** (target 60% TERCAPAI)
-- **EV: +0.51R per trade**
-- **Volume: 20 signal/bulan** (selektif, berkualitas)
-- **Profit estimasi: $31/bulan at $3 risk**
-- 6 bug kritis diperbaiki
-- 4 filter baru dari forensic analysis 179 trades
-- Single source of truth untuk scoring (signal_generator.py)
-- Backtest engine valid + reproducible
-- Live trading features aktif:
-  - Trailing stop 3-stage (BEP → +0.5R → +1.0R)
-  - Cluster correlation filter (L1/L2/DEFI/MEME)
-  - Risk scaling via TRADE_RISK_USD env
+### Scalp
+- WR backtest: 70.7% (RANGE mode + whitelist 18)
+- Volume target: 5-10 trade/hari
+- Live REAL MONEY sejak 2026-04-25
+- ⚠️ 2026-05-11 baru ketauan bug F+G block ALL signal 3 minggu, fix commit 9c87594
 
-### Target Berikutnya
-- Validasi WR live 2-3 minggu paper trade
-- Rewrite clean_signal untuk volume 2-3x (~bulan depan)
+### Infrastructure
+- VPS deploy stabil (`/home/eric/cryptovision-bot`)
+- Web dashboard end-to-end (signal → position → history)
+- UptimeRobot monitor /api/stats interval 5 menit
+- SEO/legal foundation (privacy, terms, sitemap, JSON-LD)
+- Welcome email otomatis
 
-## Fase Live Validation (2026-04-14)
+### Recovery Scripts (17 scripts in scripts/)
+Untuk recover dangling positions, dedupe web, fix label, audit Bitunix.
 
-### Status
-- Bot LIVE di Bitunix dengan balance $296.65
-- TRADE_ENABLED=true, auto scan tiap 30 menit
-- 30 trade sebelum upgrade: WR 30%, Net -$23.97 (data versi lama, abaikan)
-- Mulai validasi dari 0 setelah restart dengan filter WR 60% aktif
+## Roadmap Risk Scaling (TRADE_RISK_USD)
+| Fase | Kriteria | Risk Swing | Risk Scalp |
+|------|----------|-----------|-----------|
+| Validasi (sekarang) | - | $1 | $0.25 |
+| Bulan profit confirmed | Net PnL + bulan ini | $2 | $0.50 |
+| Bulan 2 profit | 40+ trade, WR ≥58% | $3 | $0.75 |
+| Bulan 3+ profit | 60+ trade, WR ≥60% | $5 | $1 |
+| Stabil 3 bulan | Profit konsisten | 2% balance compound | - |
 
-### Risk Config Validasi
-- `TRADE_RISK_USD=1` di `.env` (turun dari default $3)
-- 0.34% per trade dari balance $296
-- Max daily loss $10 = 10 SL beruntun sebelum stop
-- Profit target kecil (~$10/bulan) tapi AMAN untuk validasi
+## Status Sekarang (2026-05-11)
+- Bot live VPS PID 370571
+- Commit 9c87594 deployed (Bug F + G fix scalp)
+- Waiting first scalp signal validate fix
+- Swing volume normal (sudah 20+ trade bulan ini)
+- Next milestone: review PnL akhir bulan untuk risk bump decision
 
-### Roadmap Risk Scaling (setelah validasi)
-| Fase | Kriteria | Risk |
-|------|----------|------|
-| Validasi M1-2 | Sekarang | $1 |
-| M3-4 | 20+ trade, WR ≥55% | $2 |
-| Bulan 2 | 40+ trade, WR ≥58% | $3 |
-| Bulan 3+ | 60+ trade, WR ≥60% | $5 |
-| Bulan 6+ | Profit stabil 3 bulan | 2% balance (compound) |
+## Workflow Wajib (Trust Damage Prevention)
+Setelah marathon sesi 2026-05-09/10 (web sync 7+ iterasi sloppy):
 
-### Bug Fix Display (2026-04-14)
-- `bitunix_trader.py` line 1335 — hapus hardcode "IDEAL=$2 | GOOD=$1 per trade"
-- Sekarang display reflect TRADE_RISK_USD dari .env secara akurat
-- Status `/trade` sekarang menunjukkan "$1 flat per trade"
-
-### Posisi Terbuka Saat Migrasi
-- **XPLUSDT SHORT x20** entry 0.1259, mark 0.1269 (loss -15.7%)
-- Dibiarkan jalan (keputusan user) — bukan hasil filter baru
+1. **Think first, code second** — pikirin dampak ke production data sebelum push
+2. **Idempotent design** — script harus aman re-run, DELETE before POST
+3. **Hardcode > compute** untuk historical sync (audit Bitunix sekali, hardcode)
+4. **Test 1 sample dulu** sebelum massal (--symbol XYZ flag)
+5. **User verify between steps** — jangan chain 5 operations
+6. **Verify web display logic** sebelum POST (label threshold, schema)
+7. **Backtest dulu** sebelum push config change (incident auto-tune 2026-04-25, 2 hari zero signal)
+8. **Cross-check Bitunix actual** sebelum trust local state
+9. **Recovery script fetch ALL records** — bukan hist[0]
+10. **Web sync wajib** lewat HMAC POST, bukan manual edit DB
