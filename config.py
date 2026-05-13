@@ -201,7 +201,7 @@ SIGNAL_PARAMS = {
     'max_sl_pct'        : 6.0,
     'min_rr_tp2'        : 1.0,   # Dikembalikan — SL sudah lebih lebar, jangan dobel filter
     'tp1_rr_min'        : 1.2,   # Dikembalikan — resistance cap lebih dominan dari setting ini
-    'tp1_rr_max'        : 2.0,
+    'tp1_rr_max'        : 1.5,   # Cap di 1.5 — backtest 90d top200 nunjukin RR1 1.5-2.0 WR cuma 32.5% (n=40), TP1 jarang hit (7.5%) karena terlalu jauh
     'tp2_rr_min'        : 2.0,   # Dikembalikan — TP2 default tetap 2R
     'tp2_rr_max'        : 3.5,
     'rr2_warn_threshold': 2.0,

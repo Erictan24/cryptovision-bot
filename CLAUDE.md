@@ -202,6 +202,63 @@ Background thread notif pakai `asyncio.new_event_loop()` → conflict dengan Tel
 - RSI Divergence (+10% bias)
 - HTF BOS / HTF EMA aligned (+7% bias each)
 
+## ⚠ PATTERN SHIFT — Penemuan Backtest 2026-05-13 (692 SWING trades top 200)
+
+**PENTING:** Pattern di atas (data lama 179 trades) sudah BERUBAH di backtest 90d terkini. Market regime shift terdeteksi. Old pattern tetap reference, tapi data baru menggambarkan kondisi sekarang.
+
+### Kills sekarang PREDIKTIF LOSS (reversal dari old)
+- **0 kills: WR 77.6%** ✨ (vs old "67% baseline")
+- 1 kill: WR 60.2% (drop -17pp)
+- 2 kills: WR 62.8%
+- Old asumsi "kills = notes deskriptif" TIDAK BERLAKU di market sekarang.
+
+### Quality Tier — MODERATE > GOOD (counter-intuitive!)
+- **MODERATE: WR 71.4%** ✨ (398 trades)
+- GOOD: WR 56.8% (280 trades — UNDERPERFORM)
+
+### Direction × Quality (asimetris parah)
+- **SHORT MODERATE: 326 trades / WR 75.5% / +343.9R** ⭐ (66% PnL total — JUARA)
+- SHORT GOOD: 181 trades / WR 51.9% / +62.1R (RACUN — nyaris coin flip)
+- LONG GOOD: 99 trades / WR 65.7% / +83.3R
+- LONG MODERATE: 72 trades / WR 52.8% / +26.3R
+
+### Score TINGGI = WR RENDAH (counter-intuitive)
+- Score <18: WR 71.2% (sub-threshold)
+- Score 18-19: WR 66.9%
+- Score 20-21: WR 61.1% (drop)
+- Score 24+: WR 57% (dead zone, hard reject)
+
+### RR1 1.5-2.0 = BENCANA → Fix tp1_rr_max 1.5 (sedang divalidasi)
+- 40 trades / WR 32.5% / EV +0.06R
+- TP1_HIT cuma 7.5% (vs 39.7% healthy)
+- SL_HIT 62.5%
+- Setup dominan: SHORT counter-trend di Discount Zone + Doji/Harami
+- **Fix:** config.py:204 `tp1_rr_max: 2.0 → 1.5` (backtest validation in progress 2026-05-13)
+
+### Session Bias
+- Asia (00-07 UTC): WR 68.1% ✨
+- London (08-15): WR 65.9%
+- NY (16-23): WR 60.3% (worst, -8pp)
+
+### Bars-to-Outcome
+- Fast (<10 bars): WR 55.1% (mostly SL — tight setup gagal)
+- Mid (10-25): WR 61.9%
+- Slow (25-50): WR 77.6% ✨
+- Very slow (50+): WR 76.5%
+- **Implikasi:** Trade yang patient = win. Setup yang langsung resolve = trap.
+
+### Market Regime Sekarang
+- **SHORT-dominant**: 515 SHORT vs 177 LONG di SWING
+- SHORT WR 67.3% > LONG 61.5%
+- Backtest 90d (Feb-Mei 2026) = trending bearish
+- Old pattern (LONG WR 71-86%) kebalikan dari sekarang
+
+### Aturan Refresh
+- Pattern di atas adalah SNAPSHOT 2026-05-13, BUKAN rule absolut
+- Wajib re-backtest tiap akhir bulan untuk track regime shift
+- JANGAN hardcode filter berdasarkan pattern shift (selection bias trap)
+- Pattern shift = early warning system untuk regime change
+
 ## Backtest Results History
 
 ### Swing
@@ -212,6 +269,7 @@ Background thread notif pakai `asyncio.new_event_loop()` → conflict dengan Tel
 | 1h+4h Opsi B ADX | 126 | 63.8-65.6% | +0.56R | 21/bln |
 | max_kills=1 + score=18 | - | naik semua metric | naik | naik |
 | zone_margin 0.6→1.0 (05-02) | 265 | 60.0% | +0.54R | +20% |
+| **Top 200 90d (05-13)** | **692** | **64.9%** | **+0.75R** | **231/bln** ⭐ |
 
 ### Scalp
 | Setup | Trades | WR | EV | Note |
@@ -301,12 +359,19 @@ Untuk recover dangling positions, dedupe web, fix label, audit Bitunix.
 | Bulan 3+ profit | 60+ trade, WR ≥60% | $5 | $1 |
 | Stabil 3 bulan | Profit konsisten | 2% balance compound | - |
 
-## Status Sekarang (2026-05-11)
-- Bot live VPS PID 370571
-- Commit 9c87594 deployed (Bug F + G fix scalp)
-- Waiting first scalp signal validate fix
+## Status Sekarang (2026-05-13)
+- Bot live VPS PID 370571 (commit 9c87594 Bug F+G fix scalp)
+- **Backtest 90d top200 selesai (05-13):** SWING +516R/64.9% WR, SCALP +40R/68.7% WR, COMBINED +556R = $186/bln ✨
+- **Config change WIP:** `tp1_rr_max 2.0 → 1.5` (config.py:204) — backtest validation in progress
+- **Pattern shift detected:** 0 kills WR 77.6%, MODERATE > GOOD, SHORT MODERATE juara (lihat section Pattern Shift)
 - Swing volume normal (sudah 20+ trade bulan ini)
-- Next milestone: review PnL akhir bulan untuk risk bump decision
+- **Strategic decision 2026-05-13:** Hapus bot SCALP, fokus penuh SWING (SCALP cuma 7% PnL bot)
+- **Roadmap:**
+  1. Validate tp1_rr_max fix (backtest in progress)
+  2. Deploy SWING fix ke live (commit + push VPS)
+  3. Monitor SWING 3-5 hari
+  4. Hapus SCALP (disable scan → wait close → delete code + data SCALP only via WHERE engine='SCALP'/strategy='scalp')
+  5. Review PnL akhir bulan untuk risk bump decision
 
 ## Workflow Wajib (Trust Damage Prevention)
 Setelah marathon sesi 2026-05-09/10 (web sync 7+ iterasi sloppy):
@@ -321,3 +386,5 @@ Setelah marathon sesi 2026-05-09/10 (web sync 7+ iterasi sloppy):
 8. **Cross-check Bitunix actual** sebelum trust local state
 9. **Recovery script fetch ALL records** — bukan hist[0]
 10. **Web sync wajib** lewat HMAC POST, bukan manual edit DB
+11. **JANGAN overfilter berdasarkan past backtest** — selection bias trap. Market regime berubah tiap bulan, pattern shift sudah terbukti (lihat section Pattern Shift 2026-05-13). Targeted fix OK kalau root cause clear (RR1 1.5-2.0 case), tapi combo filter rules = NO.
+12. **Save findings real-time** ke memory + CLAUDE.md, jangan tunda. Sesi panjang banyak insight, gampang lupa.
