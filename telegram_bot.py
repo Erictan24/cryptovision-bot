@@ -277,7 +277,6 @@ class TelegramBot:
             ("verify",    self.cmd_verify),
             ("grant",     self.cmd_grant),
             ("reset_pnl", self.cmd_reset_pnl),
-            ("scalp_stats", self.cmd_scalp_stats),
             ("balance",   self.cmd_balance),
             ("pause",     self.cmd_pause),
             ("resume",    self.cmd_resume),
@@ -446,11 +445,6 @@ class TelegramBot:
             "  /monthly             — Laporan bulanan\n"
             "  /reset_pnl           — Reset display PnL bulanan\n\n"
 
-            "─── 📝 PAPER TRADE SCALP ───────────\n"
-            "  /scalp_stats         — Rekap signal scalp paper\n"
-            "                         (WR, EV, open/closed)\n"
-            "                         Signal auto masuk 15mnt sekali\n\n"
-
             "─── ⚙️ UTILITAS ─────────────────────\n"
             "  /learn               — Laporan bot belajar\n"
             "  /train [hari] [coin] — Latih dari data historis\n"
@@ -460,7 +454,6 @@ class TelegramBot:
 
             "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
             "💡 Tip baru:\n"
-            "  • /scalp_stats — cek paper trade scalp\n"
             "  • /reset_pnl — reset PnL bulanan dari 0\n"
             "  • /chart BTC 4h — chart profesional"
         )
@@ -546,27 +539,6 @@ class TelegramBot:
                 )
             except Exception as e:
                 logger.error(f"Failed to notify admin: {e}")
-
-    # ==================================================================
-    # /verify — Admin approves payment
-    # ==================================================================
-    async def cmd_scalp_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Tampilkan rekap paper trade scalp."""
-        try:
-            from scalp_live_runner import get_paper_trader
-            pt = get_paper_trader()
-            text = pt.format_stats_msg()
-            # Tambahkan open trades
-            opens = pt.get_open_trades()
-            if opens:
-                text += "\n\n📂 OPEN PAPER TRADES:\n"
-                for o in opens[:10]:
-                    ico = "🟢" if o['direction'] == 'LONG' else "🔴"
-                    text += (f"{ico} #{o['id']} {o['symbol']} "
-                             f"{o['direction']} entry {o['entry_price']}\n")
-            await update.message.reply_text(text)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Error: {e}")
 
     async def cmd_reset_pnl(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Reset SEMUA history — /trade (bulanan/tahunan), /stats, /trades.

@@ -66,9 +66,6 @@ class CryptoSignalBot:
         # Start weekly auto-tune (Senin dini hari)
         self._start_weekly_autotune()
 
-        # Start scalp paper trade scanner (15 menit interval)
-        self._start_scalp_paper()
-
         # Start daily digest jam 20:00 ke Telegram channel
         self._start_evening_digest()
 
@@ -195,41 +192,6 @@ class CryptoSignalBot:
         t = threading.Thread(target=autotune_loop, daemon=True)
         t.start()
         logger.info("🔧 Weekly auto-tune scheduler: Senin jam 02:00")
-
-    # ==================================================================
-    # SCALP PAPER TRADE — scan 15m, track TP/SL tanpa eksekusi
-    # ==================================================================
-    def _start_scalp_paper(self):
-        """
-        Start scalp live scan (15 menit interval).
-        Eksekusi order real ke Bitunix kalau trader siap.
-        """
-        try:
-            from scalp_live_runner import start_scalp_live
-            import os
-
-            def coins_fn():
-                try:
-                    return self.tg.engine.get_top_coins(100)
-                except Exception:
-                    from config import SCAN_POOL
-                    return list(SCAN_POOL)[:30]
-
-            # Delay init agar telegram bot siap dulu
-            def delayed_start():
-                time.sleep(30)
-                risk_usd = float(os.getenv('TRADE_RISK_USD', '1.0'))
-                start_scalp_live(
-                    coins_fn=coins_fn,
-                    notify_fn=self.tg._make_notify_fn(),
-                    risk_usd=risk_usd,
-                    trader=self.tg.trader,
-                )
-
-            threading.Thread(target=delayed_start, daemon=True).start()
-            logger.info("📊 Scalp live scan scheduler: 15 menit scan")
-        except Exception as e:
-            logger.error(f"Gagal start scalp paper: {e}", exc_info=True)
 
     # ==================================================================
     # EVENING DIGEST — kirim rekap harian jam 20:00 WIB
