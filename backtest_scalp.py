@@ -31,7 +31,16 @@ if hasattr(sys.stdout, 'buffer') and not sys.stdout.closed:
     except Exception:
         pass
 
-from scalping_signal_engine import generate_scalping_signal, get_htf_bias
+# SCALP engine removed 2026-05-14 — backtest_scalp.py kept as utility
+# for fetch_klines_paginated + TradeResult dataclass. Signal generation
+# stubbed to None.
+try:
+    from scalping_signal_engine import generate_scalping_signal, get_htf_bias
+except ImportError:
+    def generate_scalping_signal(*a, **kw):
+        return None
+    def get_htf_bias(*a, **kw):
+        return None
 from indicators import calc_atr, calc_rsi, calc_adx, analyze_ema_trend
 
 # Learning modules
