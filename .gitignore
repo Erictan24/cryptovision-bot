@@ -12,3 +12,5 @@ website/
 tradingview/
 *.pkl
 .claude/
+scripts/scalp_backup_*/
+positions_check.json

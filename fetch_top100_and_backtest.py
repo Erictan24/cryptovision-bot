@@ -24,21 +24,57 @@ logger = logging.getLogger(__name__)
 CACHE_FILE = 'backtesting/cache/unified_data.pkl'
 
 
-def fetch_top_100_coins() -> list:
+def fetch_bitunix_coins() -> set:
+    """Ambil semua coin USDT tradable di Bitunix Futures (intersect target)."""
+    try:
+        resp = requests.get(
+            "https://fapi.bitunix.com/api/v1/futures/market/trading_pairs",
+            timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+        if data.get('code') != 0:
+            logger.warning(f"Bitunix API code {data.get('code')}, intersect skipped")
+            return set()
+        coins = set()
+        for pair in data.get('data', []):
+            if pair.get('symbolStatus') != 'OPEN':
+                continue
+            sym = pair.get('symbol', '')
+            if sym.endswith('USDT'):
+                coins.add(sym[:-4])
+        logger.info(f"Bitunix: {len(coins)} coin tradable")
+        return coins
+    except Exception as e:
+        logger.warning(f"Fetch Bitunix pairs gagal: {e} — intersect skipped")
+        return set()
+
+
+def fetch_top_coins(n: int = 100) -> list:
     """
-    Get top 100 LIQUID coins dari Binance Futures sorted by 24h volume.
-    Filter: stablecoins, leveraged tokens, non-ASCII names, meme coins tanpa history.
+    Get top N LIQUID coins dari Binance Futures sorted by 24h volume,
+    intersect dengan Bitunix tradable pairs.
+
+    Filter: stablecoins, leveraged tokens, tokenized stocks, non-ASCII names,
+    meme coins tanpa history, volume <$10M.
     """
-    logger.info("Fetching top coins from Binance Futures...")
+    logger.info(f"Fetching top {n} coins from Binance Futures...")
     url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
     resp = requests.get(url, timeout=15)
     resp.raise_for_status()
     tickers = resp.json()
 
+    bitunix_coins = fetch_bitunix_coins()
+
     stablecoins = {
         'USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'FDUSD', 'USDD', 'USDP',
         'WBTC', 'WETH', 'STETH', 'WSTETH', 'RETH', 'CBETH', 'FRAX', 'LUSD',
         'GUSD', 'USDE', 'WBNB', 'BTCB', 'LBTC', 'USDX', 'USD1', 'AEUR',
+    }
+
+    # Tokenized saham — bukan crypto, gerakan beda total
+    tokenized_stocks = {
+        'INTC', 'NVDA', 'AAPL', 'MSFT', 'TSLA', 'GOOGL', 'META', 'AMZN',
+        'COIN', 'MSTR', 'NFLX', 'AMD', 'QCOM', 'SPY', 'QQQ',
     }
 
     # Meme coin baru yang volatile dan sering tidak cukup historical data
@@ -62,7 +98,7 @@ def fetch_top_100_coins() -> list:
         if sym.startswith('1000'):
             continue
 
-        if sym in stablecoins or sym in meme_skip:
+        if sym in stablecoins or sym in tokenized_stocks or sym in meme_skip:
             continue
 
         # Skip leveraged tokens
@@ -83,16 +119,29 @@ def fetch_top_100_coins() -> list:
         if price < 0.0001:
             continue
 
+        # Intersect dengan Bitunix — harus tradable di exchange production
+        if bitunix_coins and sym not in bitunix_coins:
+            continue
+
         valid.append((sym, vol))
 
     # Sort by volume descending
     valid.sort(key=lambda x: x[1], reverse=True)
-    top_100 = [s for s, _ in valid[:100]]
+    top_n = [s for s, _ in valid[:n]]
 
-    logger.info(f"Filtered {len(valid)} valid coins, taking top 100")
-    logger.info(f"Top 10: {top_100[:10]}")
-    logger.info(f"#91-100: {top_100[90:100]}")
-    return top_100
+    logger.info(f"Filtered {len(valid)} valid coins (Binance x Bitunix x volume>$10M)")
+    logger.info(f"Taking top {len(top_n)} (requested {n})")
+    logger.info(f"Top 10: {top_n[:10]}")
+    if len(top_n) >= 100:
+        logger.info(f"#91-100: {top_n[90:100]}")
+    if len(top_n) >= 185:
+        logger.info(f"#176-185: {top_n[175:185]}")
+    return top_n
+
+
+# Backward-compat alias — old callers may still import this name
+def fetch_top_100_coins() -> list:
+    return fetch_top_coins(100)
 
 
 def fetch_coin_data(symbol: str, interval: str, days: int) -> object:
@@ -196,9 +245,9 @@ def main():
     print(f" Period: {days} hari")
     print("=" * 70)
 
-    # Step 1: Get top 100 coins
+    # Step 1: Get top N coins
     if not args.skip_fetch:
-        top_coins = fetch_top_100_coins()[:n_coins]
+        top_coins = fetch_top_coins(n_coins)
         logger.info(f"Using {len(top_coins)} coins")
 
         # Step 2: Fetch data

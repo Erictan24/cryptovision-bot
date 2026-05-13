@@ -34,11 +34,11 @@ from typing import Optional
 
 import pandas as pd
 
-# UTF-8 handling dilakukan di backtest_scalp.py (shared)
-
-# Bot 2 (SCALP) imports
-from scalping_signal_engine import generate_scalping_signal
+# SCALP engine removed 2026-05-14. SCALP imports wrapped for safety —
+# backtest_unified.py kini SWING-only (run_swing_backtest still works).
 from indicators import calc_atr, calc_rsi, calc_adx, analyze_ema_trend
+
+_SCALP_AVAILABLE = False  # permanent — SCALP engine removed
 
 # Bot 1 (SWING) imports
 try:
@@ -51,22 +51,17 @@ except ImportError as e:
     print(f"WARNING: Bot 1 (SWING) not available: {e}")
     _SWING_AVAILABLE = False
 
-# Reuse scalp fetcher
-from backtest_scalp import (
-    fetch_all_data as fetch_scalp_data,
-    simulate_trade as simulate_scalp_trade,
-    run_backtest_coin as run_scalp_coin,
-    CACHE_FILE as SCALP_CACHE_FILE,
-)
-
-# Learning modules
+# Fetcher utility (still useful for SWING data fetch)
 try:
-    import scalp_trade_journal as journal
-    import scalp_coin_learning as coin_learn
-    import scalp_session_filter as session_filter
-    _LEARNING_ENABLED = True
+    from backtest_scalp import (
+        fetch_all_data as fetch_scalp_data,
+        CACHE_FILE as SCALP_CACHE_FILE,
+    )
 except ImportError:
-    _LEARNING_ENABLED = False
+    fetch_scalp_data = None
+    SCALP_CACHE_FILE = 'backtesting/cache/unified_data.pkl'
+
+_LEARNING_ENABLED = False
 
 logging.basicConfig(level=logging.INFO,
                     format='%(asctime)s | %(message)s')
@@ -130,51 +125,13 @@ class UnifiedTrade:
 
 
 # ═══════════════════════════════════════════════════════════
-#  BOT 2 (SCALP) BACKTEST WRAPPER
+#  SCALP engine removed 2026-05-14 — stub returns empty
 # ═══════════════════════════════════════════════════════════
 def run_scalp_backtest(coins: list, data: dict,
                        verbose: bool = False) -> list:
-    """Run Bot 2 backtest, return list of UnifiedTrade."""
-    logger.info("═══ RUNNING BOT 2 (SCALP) ═══")
-    all_trades = []
-
-    for i, coin in enumerate(coins):
-        if coin not in data or '15m' not in data.get(coin, {}):
-            continue
-
-        logger.info(f"[SCALP {i+1}/{len(coins)}] {coin}...")
-        df_15m = data[coin]['15m']
-        df_1h = data[coin].get('1h')
-
-        scalp_trades = run_scalp_coin(coin, df_15m, df_1h, verbose)
-
-        # Convert to UnifiedTrade
-        for t in scalp_trades:
-            all_trades.append(UnifiedTrade(
-                engine='SCALP',
-                symbol=t.symbol,
-                tf='15m',
-                direction=t.direction,
-                quality=t.quality,
-                entry=t.entry,
-                sl=t.sl,
-                tp1=t.tp1,
-                tp2=t.tp2,
-                tp3=getattr(t, 'tp3', t.tp2),
-                rr1=t.rr1,
-                rr2=t.rr2,
-                score=t.score,
-                kills=t.kills,
-                timestamp=t.timestamp,
-                outcome=t.outcome,
-                bars_to_outcome=t.bars_to_outcome,
-                pnl_r=t.pnl_r,
-                reasons=t.reasons,
-            ))
-
-        logger.info(f"  SCALP {coin}: {len(scalp_trades)} trades")
-
-    return all_trades
+    """SCALP engine removed — stub returns empty list."""
+    logger.info("SCALP engine removed 2026-05-14, skipping.")
+    return []
 
 
 # ═══════════════════════════════════════════════════════════
@@ -568,9 +525,9 @@ def main():
     parser.add_argument('--force-fetch', action='store_true')
     parser.add_argument('--verbose', action='store_true')
     parser.add_argument('--engines', nargs='+',
-                        default=['scalp', 'swing'],
-                        choices=['scalp', 'swing'],
-                        help='Engines to run')
+                        default=['swing'],
+                        choices=['swing'],
+                        help='Engines to run (SCALP removed 2026-05-14)')
     args = parser.parse_args()
 
     coins = args.coins or DEFAULT_COINS
