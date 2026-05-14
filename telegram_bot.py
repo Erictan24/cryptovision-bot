@@ -2320,6 +2320,12 @@ class TelegramBot:
             now_str = datetime.now().strftime("%B %Y")
             net_ico = "+" if net >= 0 else ""
 
+            # Convert USDT to R approximation (using TRADE_RISK_USD)
+            risk_usd = float(os.getenv('TRADE_RISK_USD', '1.0'))
+            profit_r = total_profit / risk_usd if risk_usd > 0 else 0
+            loss_r   = total_loss   / risk_usd if risk_usd > 0 else 0
+            net_r    = net          / risk_usd if risk_usd > 0 else 0
+
             header = (
                 "LAPORAN BULANAN — " + now_str + "\n" +
                 "=" * 30 + "\n\n" +
@@ -2327,9 +2333,9 @@ class TelegramBot:
                 "  Total trade : " + str(total) + "\n" +
                 "  Win / Loss  : " + str(win_count) + "W / " + str(loss_count) + "L\n" +
                 "  Win Rate    : " + f"{wr:.1f}%" + "\n" +
-                "  Profit      : +$" + f"{total_profit:.2f}" + "\n" +
-                "  Loss        : -$" + f"{total_loss:.2f}" + "\n" +
-                "  Net PnL     : $" + net_ico + f"{net:.2f}" + " USDT\n\n" +
+                "  Profit      : +" + f"{profit_r:.2f}" + "R\n" +
+                "  Loss        : -" + f"{loss_r:.2f}" + "R\n" +
+                "  Net PnL     : " + net_ico + f"{net_r:.2f}" + "R\n\n" +
                 "=" * 30 + "\n" +
                 "DETAIL TRADE (terbaru)\n\n"
             )
@@ -2351,11 +2357,12 @@ class TelegramBot:
                 d = "LONG" if side in ("BUY", "LONG") else "SHORT"
                 result_icon = "P" if pnl > 0 else ("L" if pnl < 0 else "-")
 
+                pnl_r_est = pnl / risk_usd if risk_usd > 0 else 0
                 detail += (
                     str(i) + ". " + sym + " " + d + " x" + str(lev) + "  [" + result_icon + "]\n" +
                     "   Entry: " + f"{entry:.4f}" + "  Qty: " + str(qty) + "\n" +
                     "   " + open_s + " -> " + close_s + "\n" +
-                    "   PnL: " + f"{pnl:+.4f}" + " USDT\n\n"
+                    "   PnL: " + f"{pnl_r_est:+.2f}" + "R\n\n"
                 )
 
             # Kirim header dulu, lalu detail (mungkin panjang)
@@ -2658,7 +2665,7 @@ class TelegramBot:
             f"Total Trades: {total}\n"
             f"Win: {wins} | Loss: {losses}\n"
             f"WIN RATE: {wr:.1f}%\n\n"
-            f"Total PnL: {total_pnl_r:+.2f}R (${total_pnl_usd:+.2f})\n"
+            f"Total PnL: {total_pnl_r:+.2f}R\n"
             f"Avg Win: {avg_win_r:+.2f}R\n"
             f"Avg Loss: {avg_loss_r:.2f}R\n\n"
             f"Distribusi:\n"
@@ -2669,7 +2676,7 @@ class TelegramBot:
             text += "Per Strategi:\n"
             for s, d in by_s.items():
                 wrs = (d['wins'] / d['total'] * 100) if d['total'] else 0
-                text += f"  {s}: {d['total']} trade, {wrs:.0f}% WR, {d['pnl_r']:+.2f}R (${d['pnl_usd']:+.2f})\n"
+                text += f"  {s}: {d['total']} trade, {wrs:.0f}% WR, {d['pnl_r']:+.2f}R\n"
             text += "\n"
 
         if by_q:
