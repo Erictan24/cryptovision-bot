@@ -509,19 +509,10 @@ class BitunixTrader:
                     return {'ok': False, 'msg': 'Gagal ambil balance'}
                 risk_amount = balance * (self.risk_pct / 100)
 
-            # Opsi A (2026-04-24): Quality-based risk sizing (Kelly lite).
-            # Data 105 trades: GOOD WR 57% EV +0.39R | WAIT WR 45% EV +0.11R
-            # Backtest: naik 34% total PnL tanpa ubah volume.
-            # Update 2026-04-24: base risk $0.50 (validasi ketat).
-            #   IDEAL=1.5x → $0.75 | GOOD=1.0x → $0.50
-            #   MODERATE=0.7x → $0.35 | WAIT=0.6x → $0.30
-            _quality_mult = {
-                'IDEAL': 1.5,
-                'GOOD': 1.0,
-                'MODERATE': 0.7,
-                'WAIT': 0.6,
-            }.get(quality.upper(), 1.0)
-            risk_amount *= _quality_mult
+            # Quality multiplier DISABLED 2026-05-17 — flat $1 risk regardless quality.
+            # User decision: simplify risk profile, semua trade equal risk.
+            # Old behavior (commented): GOOD 1.0x, MODERATE 0.7x, WAIT 0.6x → reduce risk for lower quality.
+            # New: risk_amount = TRADE_RISK_USD untuk semua quality tier.
 
             raw_qty  = risk_amount / risk_per_unit
             qty      = self.round_qty(raw_qty, symbol)

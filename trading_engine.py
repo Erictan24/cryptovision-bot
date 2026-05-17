@@ -428,14 +428,65 @@ class TradingEngine:
         # ── PRIMARY: Binance Futures ─────────────────────────────
         df = self._get_klines_binance(symbol, interval, limit)
 
-        # ── FALLBACK: CryptoCompare ──────────────────────────────
+        # ── FALLBACK 1: Bitunix Futures (for coin yang gak ada di Binance) ──
         if df is None:
-            logger.debug(f"Binance fallback CC: {symbol} {interval}")
+            logger.debug(f"Binance miss, try Bitunix: {symbol} {interval}")
+            df = self._get_klines_bitunix(symbol, interval, limit)
+
+        # ── FALLBACK 2: CryptoCompare ────────────────────────────
+        if df is None:
+            logger.debug(f"Bitunix miss, fallback CC: {symbol} {interval}")
             df = self._get_klines_cc(symbol, tf_key, is_higher, is_lower)
 
         if df is not None:
             self._cache_set(self.ohlcv_cache, cache_key, df)
         return df
+
+    def _get_klines_bitunix(self, symbol: str, interval: str, limit: int = 200):
+        """Fetch OHLCV dari Bitunix Futures API.
+
+        Used as fallback ketika Binance gak punya coin (terutama tail/altcoin).
+        Bitunix max 200 candles per request — sufficient untuk indicator (warm-up <100).
+        """
+        try:
+            pair = symbol.upper() + 'USDT'
+            url  = "https://fapi.bitunix.com/api/v1/futures/market/kline"
+            data = self._http_get(url, params={
+                'symbol'  : pair,
+                'interval': interval,
+                'limit'   : min(limit + 1, 200),
+            })
+            if not data or not isinstance(data, dict):
+                return None
+            if data.get('code') != 0:
+                return None
+            candles = data.get('data', [])
+            if not candles or len(candles) < 5:
+                return None
+
+            rows = []
+            for c in candles:
+                rows.append({
+                    'timestamp': pd.to_datetime(int(c['time']), unit='ms'),
+                    'open'     : float(c['open']),
+                    'high'     : float(c['high']),
+                    'low'      : float(c['low']),
+                    'close'    : float(c['close']),
+                    'volume'   : float(c['baseVol']),
+                })
+
+            df = pd.DataFrame(rows).sort_values('timestamp').reset_index(drop=True)
+            df = df[df['close'] > 0].reset_index(drop=True)
+
+            # Buang candle terakhir — belum close
+            if len(df) > 10:
+                df = df.iloc[:-1].reset_index(drop=True)
+
+            return df if len(df) >= 5 else None
+
+        except Exception as e:
+            logger.debug(f"Bitunix klines {symbol} {interval}: {e}")
+            return None
 
     def _get_klines_binance(self, symbol: str, interval: str, limit: int = 200):
         """Fetch OHLCV dari Binance Futures API."""
@@ -3864,83 +3915,101 @@ class TradingEngine:
     # ==================================================================
     # DYNAMIC COIN LIST — ambil top coins by market cap
     # ==================================================================
-    def get_top_coins(self, limit=100):
+    def get_top_coins(self, limit=500):
         """
-        Ambil top coins by volume dari Binance Futures, filter ke
-        coin yang tersedia di Bitunix (exchange tempat bot trading).
+        Ambil top coins by volume dari Bitunix Futures (source switched 2026-05-17).
 
         Filter sampah:
-          - Min volume 24h $10M (sebelumnya $1M — terlalu rendah)
-          - Harus tersedia di Bitunix (intersect)
-          - Buang stablecoin, leveraged token, commodity
+          - Buang stablecoin, leveraged token, commodity/gold tokens
+          - Buang non-ASCII names
+          - No volume floor (Bitunix sudah filter via listing process)
+
+        Returns up to `limit` coin, sorted by 24h volume desc.
+        Fallback ke Binance×Bitunix kalau Bitunix API gagal.
         """
         cache_key = f"top_coins_{limit}"
         cached = self._cache_get(self.price_cache, cache_key)
         if cached is not None:
             return cached
 
-        # Ambil daftar coin tersedia di Bitunix (cached per session)
-        bitunix_coins = self._get_bitunix_available_coins()
-
-        # Binance Futures 24hr ticker — return semua pairs sekaligus
-        all_tickers = self._http_get(
-            "https://fapi.binance.com/fapi/v1/ticker/24hr")
-
         stablecoins = {
             'USDT','USDC','BUSD','DAI','TUSD','FDUSD','USDD','USDP',
             'WBTC','WETH','STETH','WSTETH','RETH','CBETH','FRAX','LUSD',
-            'GUSD','USDE','WBNB','BTCB','LBTC','USDX',
+            'GUSD','USDE','WBNB','BTCB','LBTC','USDX','USD1','AEUR',
         }
-        # Tokenized saham — bukan crypto, gerakan beda total
         tokenized_stocks = {
             'INTC','NVDA','AAPL','MSFT','TSLA','GOOGL','META','AMZN',
             'COIN','MSTR','NFLX','AMD','QCOM','SPY','QQQ',
         }
+        commodity = {'XAU','XAG','XAUT','PAXG','CL','BZ','GC','SI','NG','XPT','XPD'}
 
         coins = []
-        if all_tickers and isinstance(all_tickers, list):
-            # Filter USDT pairs saja, buang stablecoin dan leveraged token
-            valid = []
-            for t in all_tickers:
-                sym_pair = t.get('symbol', '')
-                if not sym_pair.endswith('USDT'):
-                    continue
-                sym = sym_pair[:-4]
-                if sym in stablecoins:
-                    continue
-                # Buang tokenized stocks (INTC, NVDA, dll) — bukan crypto
-                if sym in tokenized_stocks:
-                    continue
-                # Buang non-ASCII names (mandarin, cyrillic, dll)
-                if not sym.isascii() or not sym.replace('_', '').isalnum():
-                    continue
-                # Buang leveraged token (UP/DOWN/BULL/BEAR suffix)
-                if any(sym.endswith(s) for s in ('UP','DOWN','BULL','BEAR','3L','3S')):
-                    continue
-                # Buang commodity/index futures (bukan crypto)
-                if sym in ('XAU','XAG','CL','BZ','GC','SI','NG','XPT','XPD'):
-                    continue
-                # Buang simbol terlalu pendek (kemungkinan bukan crypto normal)
-                if len(sym) < 2:
-                    continue
-                vol = float(t.get('quoteVolume', 0) or 0)
-                if vol < 10_000_000:   # Min $10 juta volume 24h (buang sampah)
-                    continue
-                # Filter: hanya coin yang tersedia di Bitunix
-                if bitunix_coins and sym not in bitunix_coins:
-                    continue
-                valid.append((sym, vol))
+        # ── PRIMARY: Bitunix Futures Tickers ─────────────────────
+        try:
+            bitunix_data = self._http_get(
+                "https://fapi.bitunix.com/api/v1/futures/market/tickers")
+            if bitunix_data and isinstance(bitunix_data, dict) and bitunix_data.get('code') == 0:
+                tickers = bitunix_data.get('data', [])
+                valid = []
+                for t in tickers:
+                    sym_pair = t.get('symbol', '')
+                    if not sym_pair.endswith('USDT'):
+                        continue
+                    sym = sym_pair[:-4]
+                    if sym in stablecoins or sym in tokenized_stocks or sym in commodity:
+                        continue
+                    if not sym.isascii() or not sym.replace('_', '').isalnum():
+                        continue
+                    if any(sym.endswith(s) for s in ('UP','DOWN','BULL','BEAR','3L','3S','5L','5S')):
+                        continue
+                    if sym.startswith('1000') or len(sym) < 2:
+                        continue
+                    try:
+                        vol = float(t.get('quoteVol', 0))
+                    except Exception:
+                        continue
+                    if vol <= 0:
+                        continue
+                    valid.append((sym, vol))
 
-            # Urutkan volume tertinggi dulu (paling likuid = paling relevan)
-            valid.sort(key=lambda x: x[1], reverse=True)
-            coins = [sym for sym, _ in valid[:limit]]
+                valid.sort(key=lambda x: x[1], reverse=True)
+                coins = [sym for sym, _ in valid[:limit]]
+        except Exception as e:
+            logger.warning(f"Bitunix tickers fetch failed: {e}")
+
+        # ── FALLBACK: Binance × Bitunix intersect (legacy path) ──
+        if not coins:
+            logger.warning("Bitunix source kosong, fallback ke Binance×Bitunix legacy")
+            bitunix_set = self._get_bitunix_available_coins()
+            all_tickers = self._http_get(
+                "https://fapi.binance.com/fapi/v1/ticker/24hr")
+            if all_tickers and isinstance(all_tickers, list):
+                valid = []
+                for t in all_tickers:
+                    sym_pair = t.get('symbol', '')
+                    if not sym_pair.endswith('USDT'):
+                        continue
+                    sym = sym_pair[:-4]
+                    if sym in stablecoins or sym in tokenized_stocks or sym in commodity:
+                        continue
+                    if not sym.isascii() or not sym.replace('_', '').isalnum():
+                        continue
+                    if any(sym.endswith(s) for s in ('UP','DOWN','BULL','BEAR','3L','3S')):
+                        continue
+                    vol = float(t.get('quoteVolume', 0) or 0)
+                    if vol < 1_000_000:
+                        continue
+                    if bitunix_set and sym not in bitunix_set:
+                        continue
+                    valid.append((sym, vol))
+                valid.sort(key=lambda x: x[1], reverse=True)
+                coins = [sym for sym, _ in valid[:limit]]
 
         if coins:
             self.price_cache[cache_key] = (coins, time.time())
-            logger.info(f"Top {len(coins)} coins dari Binance Futures (by volume)")
+            logger.info(f"Top {len(coins)} coins dari Bitunix (by volume)")
         else:
-            # Fallback ke SCAN_POOL kalau Binance tidak tersedia
-            logger.warning("get_top_coins: Binance gagal, fallback SCAN_POOL")
+            logger.warning("get_top_coins: gagal semua, fallback SCAN_POOL")
             coins = list(SCAN_POOL) if isinstance(SCAN_POOL, set) else SCAN_POOL
 
         return coins
@@ -4050,9 +4119,9 @@ class TradingEngine:
         3. Full analyze coin yang lolos
         4. Rank & return top signals
         """
-        # Fase 1: ambil coin list
+        # Fase 1: ambil coin list (500 dari Bitunix, switched 2026-05-17)
         if pool is None:
-            pool = self.get_top_coins(100)
+            pool = self.get_top_coins(500)
 
         if progress_callback:
             progress_callback(f"📡 Fase 1: {len(pool)} coin dimuat")

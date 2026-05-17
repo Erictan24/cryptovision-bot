@@ -2476,7 +2476,7 @@ class TelegramBot:
                 coins.append(a.upper())
 
         if not coins:
-            coins = self.engine.get_top_coins(100)
+            coins = self.engine.get_top_coins(500)
 
         coin_str = ", ".join(coins)
         msg = await update.message.reply_text(
