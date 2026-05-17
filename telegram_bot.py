@@ -1836,12 +1836,13 @@ class TelegramBot:
                 logger.info(f"⏸️ Auto scan skip — max posisi {len(positions)}/{self.trader.max_positions}")
                 return
 
-            # Scan semua top-100 coin dari Binance Futures
+            # Scan top coins dari Bitunix (env-controlled)
             logger.info("🔍 Auto scan mencari signal terbaik...")
-            coins = await loop.run_in_executor(None, self.engine.get_top_coins, 100)
+            scan_limit = int(os.getenv('TRADE_SCAN_LIMIT', '500'))
+            coins = await loop.run_in_executor(None, self.engine.get_top_coins, scan_limit)
 
             traded = 0
-            MAX_PER_CYCLE = 3  # max 3 posisi per 30 menit — risk $1 × 3 = $3/cycle
+            MAX_PER_CYCLE = int(os.getenv('TRADE_MAX_PER_CYCLE', '99999'))  # 2026-05-17: env-controlled, default unlimited
 
             for symbol in coins:
                 if traded >= MAX_PER_CYCLE:
