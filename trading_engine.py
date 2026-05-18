@@ -4572,23 +4572,12 @@ class TradingEngine:
 
     def _check_btc_alt_correlation(self, direction: str, symbol: str) -> tuple:
         """
-        BTC trend = master filter untuk trade altcoin.
-        Cek BTC dulu (multi-factor), baru ambil kesimpulan signal.
+        Cek korelasi BTC sebelum trade altcoin.
+        Rule: jangan LONG alt kalau BTC bearish, jangan SHORT alt kalau BTC bullish.
 
-        Rule:
-        - BTC downtrend → JANGAN LONG alt (retracement bounce = trap)
-        - BTC uptrend → JANGAN SHORT alt (counter-trend short = trap)
-
-        Detection multi-factor OR (lebih responsif daripada RSI dependent):
-        1. Structure (DOWNTREND/UPTREND)
-        2. Price vs EMA21 4H (price action)
-        3. Price vs EMA21 1D (HTF context)
-        4. 24h price change (momentum)
-        5. Retracement bounce detection (LH dalam downtrend = bounce, not reversal)
-
-        Updated 2026-05-18: tighten dari RSI-dependent ke price-action priority.
-        Reason: bot terlalu lambat detect bearish (tunggu RSI<45 confirm).
-                Banyak LONG kena SL saat BTC clearly downtrend tapi RSI belum extreme.
+        Ini mencegah situasi seperti:
+        - BTC signal SHORT tapi TAO di-LONG → TAO ikut dump
+        - BTC recovery tapi alt masih di-SHORT
 
         Return: (ok: bool, reason: str)
         """
@@ -4599,106 +4588,58 @@ class TradingEngine:
         try:
             import numpy as np
 
-            # ── BTC 4H data (primary) ────────────────────────────
+            # Ambil data BTC 4H untuk cek bias
             df_btc_4h = self.get_klines('BTC', '4h', is_higher=False)
             if df_btc_4h is None or len(df_btc_4h) < 20:
-                return True, ''
+                return True, ''  # tidak bisa cek → allow
 
-            closes_4h = df_btc_4h['close'].values.astype(float)
-            highs_4h  = df_btc_4h['high'].values.astype(float)
-            lows_4h   = df_btc_4h['low'].values.astype(float)
+            closes = df_btc_4h['close'].values.astype(float)
+            highs  = df_btc_4h['high'].values.astype(float)
+            lows   = df_btc_4h['low'].values.astype(float)
 
-            ema21_4h = closes_4h[0]
-            for v in closes_4h:
-                ema21_4h = v * (2/22) + ema21_4h * (20/22)
+            # EMA 21 BTC 4H
+            ema21 = closes[0]
+            for v in closes:
+                ema21 = v * (2/22) + ema21 * (20/22)
 
-            btc_price  = closes_4h[-1]
-            btc_open_4 = closes_4h[-4] if len(closes_4h) >= 4 else closes_4h[0]
-            btc_open_6 = closes_4h[-6] if len(closes_4h) >= 6 else closes_4h[0]  # 24h
-            change_16h = (btc_price - btc_open_4) / max(btc_open_4, 0.001) * 100
-            change_24h = (btc_price - btc_open_6) / max(btc_open_6, 0.001) * 100
+            btc_price  = closes[-1]
+            btc_open   = closes[-4]   # harga 4 candle lalu (shift 4H)
+            btc_change = (btc_price - btc_open) / max(btc_open, 0.001) * 100
 
+            # Struktur BTC
             btc_struct = self.detect_market_structure(df_btc_4h, window=3)
 
-            # ── BTC 1D data (HTF context) ────────────────────────
-            df_btc_1d = self.get_klines('BTC', '1d', is_higher=False)
-            ema21_1d = None
-            if df_btc_1d is not None and len(df_btc_1d) >= 20:
-                closes_1d = df_btc_1d['close'].values.astype(float)
-                ema21_1d = closes_1d[0]
-                for v in closes_1d:
-                    ema21_1d = v * (2/22) + ema21_1d * (20/22)
+            # RSI BTC
+            delta  = np.diff(closes[-15:])
+            gain   = np.where(delta > 0, delta, 0)
+            loss   = np.where(delta < 0, -delta, 0)
+            ag     = np.mean(gain[-14:]) if len(gain) >= 14 else 50
+            al     = np.mean(loss[-14:]) if len(loss) >= 14 else 50
+            rsi    = 100 - 100 / (1 + ag / max(al, 0.001))
 
-            # ── Retracement bounce detection ─────────────────────
-            # Pattern: recent candles LH/LL (downtrend) + current small bullish = bounce
-            # Atau recent LL/HL + current small bearish = pullback (uptrend)
-            recent_high_4h = max(highs_4h[-6:-1]) if len(highs_4h) >= 6 else btc_price
-            recent_low_4h  = min(lows_4h[-6:-1])  if len(lows_4h) >= 6 else btc_price
-            is_bounce_in_downtrend = (
-                btc_price < recent_high_4h * 0.98  # masih di bawah recent high (downtrend)
-                and closes_4h[-1] > closes_4h[-2]  # current candle bullish (bounce)
-                and btc_price < ema21_4h           # masih di bawah EMA
-            )
-            is_pullback_in_uptrend = (
-                btc_price > recent_low_4h * 1.02   # masih di atas recent low (uptrend)
-                and closes_4h[-1] < closes_4h[-2]  # current candle bearish (pullback)
-                and btc_price > ema21_4h           # masih di atas EMA
-            )
+            btc_bearish = btc_struct == 'DOWNTREND' or (btc_price < ema21 * 0.99 and rsi < 45)
+            btc_bullish = btc_struct == 'UPTREND'   or (btc_price > ema21 * 1.01 and rsi > 55)
 
-            # ── Multi-factor BEARISH detection (OR logic) ────────
-            btc_bearish_signals = []
-            if btc_struct == 'DOWNTREND':
-                btc_bearish_signals.append('DOWNTREND')
-            if btc_price < ema21_4h:
-                btc_bearish_signals.append(f'price<EMA21_4h')
-            if ema21_1d and btc_price < ema21_1d:
-                btc_bearish_signals.append(f'price<EMA21_1d (HTF)')
-            if change_24h < -2.0:
-                btc_bearish_signals.append(f'24h {change_24h:+.1f}%')
-            if change_16h < -3.0:
-                btc_bearish_signals.append(f'16h {change_16h:+.1f}%')
-            if is_bounce_in_downtrend:
-                btc_bearish_signals.append('retracement bounce (LH)')
+            # BTC drop tajam dalam 4 candle (16 jam)
+            btc_dumping = btc_change < -4.0
+            btc_pumping = btc_change > 4.0
 
-            # ── Multi-factor BULLISH detection (OR logic) ────────
-            btc_bullish_signals = []
-            if btc_struct == 'UPTREND':
-                btc_bullish_signals.append('UPTREND')
-            if btc_price > ema21_4h:
-                btc_bullish_signals.append('price>EMA21_4h')
-            if ema21_1d and btc_price > ema21_1d:
-                btc_bullish_signals.append('price>EMA21_1d (HTF)')
-            if change_24h > 2.0:
-                btc_bullish_signals.append(f'24h {change_24h:+.1f}%')
-            if change_16h > 3.0:
-                btc_bullish_signals.append(f'16h {change_16h:+.1f}%')
-            if is_pullback_in_uptrend:
-                btc_pullback_in_uptrend = True
-
-            # Need >=2 bearish/bullish signals OR 1 strong (extreme change)
-            extreme_dump = change_16h < -5.0 or change_24h < -5.0
-            extreme_pump = change_16h > 5.0 or change_24h > 5.0
-
-            btc_bearish_confirmed = len(btc_bearish_signals) >= 2 or extreme_dump
-            btc_bullish_confirmed = len(btc_bullish_signals) >= 2 or extreme_pump
-
-            # ── Decision ─────────────────────────────────────────
             if direction == 'LONG':
-                if extreme_dump:
-                    return False, f"BTC extreme dump ({change_16h:+.1f}% 16h, {change_24h:+.1f}% 24h) — JANGAN LONG"
-                if btc_bearish_confirmed:
-                    reasons = ', '.join(btc_bearish_signals[:3])
-                    return False, f"BTC bearish [{reasons}] — jangan LONG alt"
+                if btc_dumping:
+                    return False, f"BTC dump {btc_change:.1f}% dalam 16 jam — alt ikut turun"
+                if btc_bearish:
+                    reason = f"BTC 4H DOWNTREND" if btc_struct == 'DOWNTREND' else f"BTC bearish (harga < EMA21, RSI {rsi:.0f})"
+                    return False, f"{reason} — jangan LONG alt"
             else:  # SHORT
-                if extreme_pump:
-                    return False, f"BTC extreme pump ({change_16h:+.1f}% 16h, {change_24h:+.1f}% 24h) — JANGAN SHORT"
-                if btc_bullish_confirmed:
-                    reasons = ', '.join(btc_bullish_signals[:3])
-                    return False, f"BTC bullish [{reasons}] — jangan SHORT alt"
+                if btc_pumping:
+                    return False, f"BTC pump {btc_change:.1f}% dalam 16 jam — alt ikut naik"
+                if btc_bullish:
+                    reason = f"BTC 4H UPTREND" if btc_struct == 'UPTREND' else f"BTC bullish (harga > EMA21, RSI {rsi:.0f})"
+                    return False, f"{reason} — jangan SHORT alt"
 
             return True, ''
 
-        except Exception:
+        except Exception as e:
             return True, ''
 
     def detect_market_regime(self, df_main, df_higher, price: float, atr: float) -> dict:
