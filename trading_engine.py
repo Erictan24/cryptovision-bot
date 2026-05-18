@@ -196,12 +196,13 @@ class TradingEngine:
         self._zone_cache = self._load_zone_locks()
         self._ZONE_PERSIST_HOURS = 12  # zone bertahan 12 jam
         # Rate limiter: scaled up untuk Bitunix primary + 500 coin scan.
-        # 2026-05-18: was 50/min (Binance era). Bitunix klines endpoint
-        # tolerate more — bump to 200/min untuk handle scan 500 coin × 3 TF.
-        # Bitunix backtest test ran 0.12s sleep (~500/min) tanpa error.
+        # 2026-05-18: 50 → 200 → 500/min. Bitunix klines public endpoint
+        # tolerate high rate (backtest ran 500/min equivalent tanpa error).
+        # Scan 500 coin × 3 TF = 1500 calls. At 500/min = ~3 menit per scan.
+        # Fallback Binance ada kalau Bitunix actually rate limit hit.
         self._call_times = []
         self._rate_lock = threading.Lock()
-        self._MAX_CALLS_PER_MIN = 200
+        self._MAX_CALLS_PER_MIN = 500
 
         # Whale sentiment cache — TTL 30 menit per coin
         # Biar tidak perlu hit API setiap scan (lambat + quota habis)
