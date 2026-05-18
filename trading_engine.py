@@ -177,11 +177,17 @@ class TradingEngine:
         self.CACHE_TTL = 60            # 1 menit cache klines/price
         self.SR_CACHE_TTL = 3600       # 1 jam cache S&R — zone harus stabil
         self._session = requests.Session()
+        # 2026-05-18: scale up pool untuk handle 500 coin scan concurrent
+        # Default pool=10 → overflow saat scan banyak coin. Naik ke 50.
+        from requests.adapters import HTTPAdapter
+        _adapter = HTTPAdapter(pool_connections=50, pool_maxsize=50, max_retries=0)
+        self._session.mount('http://', _adapter)
+        self._session.mount('https://', _adapter)
         self._session.headers.update({
             'User-Agent': 'Mozilla/5.0',
             'authorization': f'Apikey {CRYPTOCOMPARE_API_KEY}',
         })
-        self.exchange = "Binance"
+        self.exchange = "Bitunix"  # Data source = execution venue (was Binance)
         # Signal direction cache — prevent flip-flop
         self._signal_cache = {}  # {symbol: {dir, ts, score, quality}}
         self._SIGNAL_LOCK_HOURS = 4  # jangan ganti arah dalam 4 jam
@@ -425,17 +431,20 @@ class TradingEngine:
         if cached is not None:
             return cached
 
-        # ── PRIMARY: Binance Futures ─────────────────────────────
-        df = self._get_klines_binance(symbol, interval, limit)
+        # ── PRIMARY: Bitunix Futures (data source = execution venue) ──
+        # 2026-05-18: switched dari Binance primary → Bitunix primary.
+        # Reason: bot scan 500 coin × 3 TF = overwhelm Binance rate limit.
+        # Bitunix lebih lenient + data 1:1 dengan execution venue (no slippage).
+        df = self._get_klines_bitunix(symbol, interval, limit)
 
-        # ── FALLBACK 1: Bitunix Futures (for coin yang gak ada di Binance) ──
+        # ── FALLBACK 1: Binance Futures (cross-check + jika Bitunix gak ada) ──
         if df is None:
-            logger.debug(f"Binance miss, try Bitunix: {symbol} {interval}")
-            df = self._get_klines_bitunix(symbol, interval, limit)
+            logger.debug(f"Bitunix miss, try Binance: {symbol} {interval}")
+            df = self._get_klines_binance(symbol, interval, limit)
 
         # ── FALLBACK 2: CryptoCompare ────────────────────────────
         if df is None:
-            logger.debug(f"Bitunix miss, fallback CC: {symbol} {interval}")
+            logger.debug(f"Binance miss, fallback CC: {symbol} {interval}")
             df = self._get_klines_cc(symbol, tf_key, is_higher, is_lower)
 
         if df is not None:
