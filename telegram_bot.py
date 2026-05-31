@@ -1738,6 +1738,11 @@ class TelegramBot:
                 # via quality_mult di place_order, jadi proteksi tetap ada.
                 if quality not in ("MODERATE", "GOOD", "IDEAL"):
                     continue
+                # 2026-05-31: Block Score >= 26 — 5/5 SL di live 14d Aggressive
+                # (PLUME, AIO, TST, BNB, SEI). Pattern match backtest "dead zone".
+                if sig.get("confluence_score", 0) >= 26:
+                    logger.info(f"⛔ {symbol} skip — score {sig.get('confluence_score',0)} >= 26 (overconfidence trap)")
+                    continue
 
                 # Cek daily loss
                 self.trader.sync_daily_loss_from_exchange()
@@ -1864,6 +1869,11 @@ class TelegramBot:
                     # 2026-05-02: lower threshold GOOD→MODERATE (lihat catatan di
                     # _auto_execute_signals). Risk MODERATE 0.7x via quality_mult.
                     if quality not in ("MODERATE", "GOOD", "IDEAL"):
+                        continue
+                    # 2026-05-31: Block Score >= 26 — 5/5 SL di live 14d (PLUME,
+                    # AIO, TST, BNB, SEI). Pattern match backtest "dead zone".
+                    if sig.get("confluence_score", 0) >= 26:
+                        logger.info(f"⛔ {symbol} skip — score {sig.get('confluence_score',0)} >= 26 (overconfidence trap)")
                         continue
 
                     # Anti-duplicate: cek apakah sudah trade coin ini
