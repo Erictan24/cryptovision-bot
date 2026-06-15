@@ -7,7 +7,7 @@ load_dotenv()
 # API KEYS
 # =============================================
 TELEGRAM_BOT_TOKEN    = os.getenv('TELEGRAM_BOT_TOKEN')
-CRYPTOCOMPARE_API_KEY = os.getenv('CRYPTOCOMPARE_API_KEY', 'ff78fd3f7447f36a678ca4c956e218650fc9c1f508246694b11f5dd2348e3691')
+CRYPTOCOMPARE_API_KEY = os.getenv('CRYPTOCOMPARE_API_KEY', '')  # WAJIB diisi di .env (jangan hardcode key di sini)
 
 # =============================================
 # PAIR YANG AKAN DI-SCAN
