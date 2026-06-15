@@ -14,3 +14,4 @@ tradingview/
 .claude/
 scripts/scalp_backup_*/
 positions_check.json
+data/paper_trades.db

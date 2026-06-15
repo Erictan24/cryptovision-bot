@@ -16,6 +16,10 @@ try:
     from bitunix_trader import BitunixTrader
 except ImportError:
     BitunixTrader = None
+try:
+    from paper_trader import PaperTrader
+except ImportError:
+    PaperTrader = None
 from config import TELEGRAM_BOT_TOKEN, DAILY_SIGNAL
 from whale_analyzer import WhaleAnalyzer
 from trading_engine import resolve_tf, VALID_TFS
@@ -220,13 +224,16 @@ class TelegramBot:
         self.engine   = None
         self.risk     = None
         self.whale    = WhaleAnalyzer()
-        # Auto trader (Bitunix)
+        # Auto trader (Bitunix asli ATAU PaperTrader uang palsu)
+        self.paper_mode = os.getenv('PAPER_TRADING', '0') == '1'
         self.trader = None
-        if BitunixTrader:
+        _TraderCls = PaperTrader if (self.paper_mode and PaperTrader) else BitunixTrader
+        if _TraderCls:
             try:
-                self.trader = BitunixTrader()
+                self.trader = _TraderCls()
                 if self.trader.is_ready:
-                    logger.info("✅ BitunixTrader siap")
+                    logger.info("🧪 PaperTrader siap (uang palsu)" if self.paper_mode
+                                else "✅ BitunixTrader siap")
                     # Resume TP1 monitor untuk posisi yang ada sebelum restart
                     import threading
                     def _resume():
@@ -267,6 +274,7 @@ class TelegramBot:
             ("stats",     self.cmd_stats),
             ("trades",    self.cmd_trades),
             ("trade",     self.cmd_trade),
+            ("paper",     self.cmd_paper),
             ("positions", self.cmd_positions),
             ("monitor",   self.cmd_monitor),
             ("close",     self.cmd_close),
@@ -1781,7 +1789,8 @@ class TelegramBot:
                     q_mult     = 1.5 if quality == "IDEAL" else 1.0
                     risk_shown = round(self.trader.risk_usd * q_mult, 2)
                     is_market  = result.get("order_type") == "MARKET"
-                    header     = "✅ SWING TRADE EXECUTED (MARKET)" if is_market else "📥 SWING LIMIT ORDER PLACED"
+                    _tag       = "🧪 [PAPER] " if getattr(self, "paper_mode", False) else ""
+                    header     = _tag + ("✅ SWING TRADE EXECUTED (MARKET)" if is_market else "📥 SWING LIMIT ORDER PLACED")
                     footer     = ("👁️ TP1 monitor aktif" if is_market else
                                   "⏳ Menunggu LIMIT fill — TP1 monitor start otomatis saat filled")
                     notif = (
@@ -2158,6 +2167,32 @@ class TelegramBot:
             await self._safe_edit(msg, text)
         except Exception as e:
             await msg.edit_text(str(e)[:300])
+
+    async def cmd_paper(self, update, context):
+        """Statistik paper trading (uang palsu)."""
+        if not getattr(self, "paper_mode", False) or not hasattr(self.trader, "paper_stats"):
+            await update.message.reply_text(
+                "Paper trading TIDAK aktif.\n"
+                "Set PAPER_TRADING=1 di .env lalu restart bot.")
+            return
+        try:
+            s = self.trader.paper_stats()
+            oc = s.get("by_outcome", {})
+            oc_str = " · ".join(f"{k}:{v}" for k, v in sorted(oc.items())) or "-"
+            sign = "+" if s["total_r"] >= 0 else ""
+            text = (
+                "🧪 PAPER TRADING (uang palsu)\n"
+                "=" * 28 + "\n"
+                f"Closed   : {s['closed']} trade\n"
+                f"Win Rate : {s['wr']}% ({s['wins']}W / {s['closed']-s['wins']}L)\n"
+                f"Net PnL  : {sign}{s['total_r']}R  (${s['total_usd']})\n"
+                f"Outcome  : {oc_str}\n"
+                "-" * 28 + "\n"
+                f"Open     : {s['open']}  ·  Pending: {s['pending']}  ·  Expired: {s['expired']}\n"
+            )
+            await update.message.reply_text(text)
+        except Exception as e:
+            await update.message.reply_text(f"Error: {str(e)[:300]}")
 
     async def cmd_positions(self, update, context):
         if not self.trader:
